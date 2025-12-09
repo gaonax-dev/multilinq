@@ -117,7 +117,8 @@ async function translateWithOpenAI(
   text: string,
   sourceLanguage: string,
   targetLanguage: string,
-  apiKey?: string
+  apiKey?: string,
+  comment?: string
 ): Promise<string> {
   if (!apiKey) {
     throw new Error("OpenAI API 키가 필요합니다.");
@@ -126,7 +127,7 @@ async function translateWithOpenAI(
   const OpenAI = await import("openai");
   const openai = new OpenAI.OpenAI({ apiKey });
   
-  const prompt = buildAITranslationPrompt(text, targetLanguage);
+  const prompt = buildAITranslationPrompt(text, targetLanguage, comment);
   
   const completion = await openai.chat.completions.create({
     model: "gpt-4",
@@ -143,13 +144,7 @@ async function translateWithOpenAI(
     temperature: 0.3,
   });
   
-  let result = completion.choices[0]?.message?.content || text;
-  result = result.trim();
-  // AI 응답에서 앞뒤 괄호 제거 (예: "(번역 결과)" -> "번역 결과")
-  if (result.startsWith("(") && result.endsWith(")")) {
-    result = result.slice(1, -1).trim();
-  }
-  return result;
+  return completion.choices[0]?.message?.content || text;
 }
 
 /**
@@ -159,7 +154,8 @@ async function translateWithClaude(
   text: string,
   sourceLanguage: string,
   targetLanguage: string,
-  apiKey?: string
+  apiKey?: string,
+  comment?: string
 ): Promise<string> {
   if (!apiKey) {
     throw new Error("Claude API 키가 필요합니다.");
@@ -168,7 +164,7 @@ async function translateWithClaude(
   const Anthropic = await import("@anthropic-ai/sdk");
   const anthropic = new Anthropic.Anthropic({ apiKey });
   
-  const prompt = buildAITranslationPrompt(text, targetLanguage);
+  const prompt = buildAITranslationPrompt(text, targetLanguage, comment);
   
   const message = await anthropic.messages.create({
     model: "claude-3-5-sonnet-20241022",
@@ -183,12 +179,7 @@ async function translateWithClaude(
   
   const content = message.content[0];
   if (content.type === "text") {
-    let result = content.text.trim();
-    // AI 응답에서 앞뒤 괄호 제거 (예: "(번역 결과)" -> "번역 결과")
-    if (result.startsWith("(") && result.endsWith(")")) {
-      result = result.slice(1, -1).trim();
-    }
-    return result;
+    return content.text;
   }
   
   return text;
@@ -197,7 +188,7 @@ async function translateWithClaude(
 /**
  * AI 번역 프롬프트 생성 (레퍼런스 코드 기반)
  */
-function buildAITranslationPrompt(text: string, targetLanguage: string): string {
+function buildAITranslationPrompt(text: string, targetLanguage: string, comment?: string): string {
   const languageNames: Record<string, string> = {
     "en-GB": "English (UK)",
     "en-AU": "English (AU)",
@@ -222,7 +213,7 @@ function buildAITranslationPrompt(text: string, targetLanguage: string): string 
   const placeholderPattern = /%\d*\$?[@\w]+/g;
   const placeholders = text.match(placeholderPattern) || [];
   
-  return `Translate the following English text to ${langName} (${targetLanguage}).
+  let prompt = `Translate the following English text to ${langName} (${targetLanguage}).
 
 CRITICAL TRANSLATION RULES:
 1. DO NOT translate placeholders - Keep them EXACTLY as they appear in the original
@@ -231,13 +222,16 @@ CRITICAL TRANSLATION RULES:
 4. DO NOT replace placeholders with translated text like "__자리 표시자_0__" or "__PLACEHOLDER_0__"
 5. Preserve line breaks (\\n) exactly as in the original text
 6. Use the sequence: \`xcodebuild -exportLocalizations\` → machine translation → \`xcodebuild -importLocalizations\`
-7. Maintain the exact format and structure of placeholders
+7. Maintain the exact format and structure of placeholders`;
 
-Text to translate:
+  // comment가 있으면 컨텍스트로 추가
+  if (comment && comment.trim()) {
+    prompt += `\n\nContext/Note: ${comment}`;
+  }
 
-${text}
+  prompt += `\n\nText to translate:\n\n${text}\n\nTranslation (preserve ALL placeholders exactly as shown):`;
 
-Translation (preserve ALL placeholders exactly as shown):`;
+  return prompt;
 }
 
 /**
@@ -246,7 +240,7 @@ Translation (preserve ALL placeholders exactly as shown):`;
 export async function translateText(
   request: TranslationRequest
 ): Promise<TranslationResponse> {
-  const { text, sourceLanguage, targetLanguage, provider, apiKey, options } = request;
+  const { text, sourceLanguage, targetLanguage, provider, apiKey, comment, options } = request;
   
   if (!text || !text.trim()) {
     return {
@@ -303,7 +297,8 @@ export async function translateText(
           textWithMarkers,
           sourceLanguage,
           targetLanguage,
-          apiKey
+          apiKey,
+          comment
         );
         break;
       case "claude":
@@ -311,7 +306,8 @@ export async function translateText(
           textWithMarkers,
           sourceLanguage,
           targetLanguage,
-          apiKey
+          apiKey,
+          comment
         );
         break;
       default:
@@ -325,11 +321,6 @@ export async function translateText(
     
     // 앞뒤 공백 제거
     finalTranslated = finalTranslated.trim();
-    
-    // 앞뒤 괄호 제거 (AI 응답에서 괄호로 감싸진 경우)
-    if (finalTranslated.startsWith("(") && finalTranslated.endsWith(")")) {
-      finalTranslated = finalTranslated.slice(1, -1).trim();
-    }
     
     // 플레이스홀더 복원
     if (preservePlaceholders && placeholders.length > 0) {

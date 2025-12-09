@@ -3,6 +3,7 @@
 import { useState } from "react";
 import FileUpload from "./FileUpload";
 import LanguageList from "./LanguageList";
+import LanguageSettingsModal from "./LanguageSettingsModal";
 import { getCurrentWork, getSelectedLanguages, getOriginalXCStrings, getUnusedTranslations, setOriginalXCStrings } from "@/lib/storage";
 import { mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { parseXCStrings } from "@/lib/xcstrings-parser";
@@ -39,6 +40,7 @@ export default function Sidebar({
   const [isLoading, setIsLoading] = useState(false);
   const [internalProvider, setInternalProvider] = useState<TranslationProvider>("google-translator");
   const [internalApiKey, setInternalApiKey] = useState("");
+  const [isLanguageSettingsOpen, setIsLanguageSettingsOpen] = useState(false);
   
   const translationProvider = externalProvider ?? internalProvider;
   const apiKey = externalApiKey ?? internalApiKey;
@@ -93,7 +95,7 @@ export default function Sidebar({
     <div className="w-80 bg-white border-r border-gray-200 h-screen overflow-y-auto flex flex-col">
       <div className="p-4 border-b border-gray-200">
         <h1 className="text-xl font-bold text-gray-900">MultiLinq</h1>
-        <p className="text-xs text-gray-500 mt-1">Localizable.xcstrings 번역 도구</p>
+        <p className="text-xs text-gray-700 mt-1">Localizable.xcstrings 번역 도구</p>
       </div>
 
       <div className="p-4 space-y-4 flex-1">
@@ -126,7 +128,7 @@ export default function Sidebar({
                     value={translationProvider}
                     onChange={(e) => handleProviderChange(e.target.value as TranslationProvider)}
                     disabled={isTranslating}
-                    className="w-full px-3 py-2 border border-gray-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-gray-900 bg-white disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <option value="google-translator">Google Translator (무료)</option>
                     <option value="google-cloud">Google Cloud Translate</option>
@@ -147,7 +149,7 @@ export default function Sidebar({
                       onChange={(e) => handleApiKeyChange(e.target.value)}
                       placeholder="API 키를 입력하세요"
                       disabled={isTranslating}
-                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-gray-900 bg-white placeholder:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
                 )}
@@ -157,11 +159,21 @@ export default function Sidebar({
             <div className="border-t border-gray-200 pt-4">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-sm font-semibold text-gray-700">언어 목록</h2>
+                {(translationProvider === "openai" || translationProvider === "claude") && (
+                  <button
+                    onClick={() => setIsLanguageSettingsOpen(true)}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                    title={`${translationProvider === "openai" ? "OpenAI" : "Claude"} 지원 언어 설정`}
+                  >
+                    설정
+                  </button>
+                )}
               </div>
               <LanguageList
                 xcstrings={xcstrings}
                 selectedLocale={selectedLocale}
                 onLocaleSelect={onLocaleSelect}
+                translationProvider={translationProvider}
               />
             </div>
 
@@ -192,6 +204,12 @@ export default function Sidebar({
           </>
         )}
       </div>
+      
+      <LanguageSettingsModal
+        isOpen={isLanguageSettingsOpen}
+        onClose={() => setIsLanguageSettingsOpen(false)}
+        provider={translationProvider}
+      />
     </div>
   );
 }

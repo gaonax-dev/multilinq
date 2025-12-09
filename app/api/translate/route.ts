@@ -15,6 +15,7 @@ export async function POST(request: NextRequest) {
       targetLanguage,
       provider,
       apiKey,
+      comment,
       options,
     } = body as TranslationRequest;
     
@@ -32,6 +33,7 @@ export async function POST(request: NextRequest) {
       targetLanguage,
       provider,
       apiKey,
+      comment,
       options,
     });
     

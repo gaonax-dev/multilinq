@@ -15,6 +15,7 @@ export interface TranslationRequest {
   targetLanguage: string;
   provider: TranslationProvider;
   apiKey?: string;
+  comment?: string; // 기본 언어의 comment (번역 컨텍스트 제공)
   options?: {
     preservePlaceholders?: boolean;
     preserveLineBreaks?: boolean;

@@ -87,10 +87,10 @@ export default function FileUpload({ onFileSelect, disabled }: FileUploadProps) 
             strokeLinejoin="round"
           />
         </svg>
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-800">
           <span className="font-semibold">클릭하거나 드래그하여</span> xcstrings 파일 업로드
         </p>
-        <p className="text-xs text-gray-500">Localizable.xcstrings</p>
+        <p className="text-xs text-gray-700">Localizable.xcstrings</p>
       </div>
     </div>
   );

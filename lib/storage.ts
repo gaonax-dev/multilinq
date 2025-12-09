@@ -11,6 +11,9 @@ const STORAGE_KEYS = {
   SELECTED_LANGUAGES: "multilinq_selected_languages",
   UNUSED_TRANSLATIONS: "multilinq_unused_translations",
   ORIGINAL_XCSTRINGS: "multilinq_original_xcstrings",
+  OPENAI_SUPPORTED_LANGUAGES: "multilinq_openai_supported_languages", // OpenAI 지원 언어 목록
+  CLAUDE_SUPPORTED_LANGUAGES: "multilinq_claude_supported_languages", // Claude 지원 언어 목록
+  TRANSLATION_API_KEYS: "multilinq_translation_api_keys", // 번역 API 키들 (provider별)
 } as const;
 
 /**
@@ -327,6 +330,190 @@ export function clearAllWork(): void {
     localStorage.removeItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
   } catch (error) {
     console.error("작업 데이터 초기화 실패:", error);
+  }
+}
+
+/**
+ * 기본 OpenAI 지원 언어 목록
+ */
+function getDefaultOpenAISupportedLanguages(): string[] {
+  return [
+    "ko",
+    "en",
+    "en-US",
+    "en-GB",
+    "ja",
+    "zh-Hans",
+    "zh-Hant",
+    "zh-CN",
+    "zh-TW",
+    "zh-HK",
+    "fr",
+    "de",
+    "es",
+    "es-ES",
+    "es-419",
+    "es-US",
+    "it",
+    "pt-PT",
+    "pt-BR",
+    "ru",
+    "nl",
+    "sv",
+    "da",
+    "fi",
+    "nb",
+    "pl",
+    "cs",
+    "hu",
+    "el",
+    "ro",
+    "uk",
+    "tr",
+    "ar",
+    "he",
+    "hi",
+    "bn",
+    "ta",
+    "te",
+    "kn",
+    "ml",
+    "mr",
+    "ur",
+    "id",
+    "ms",
+    "th",
+    "vi",
+    "fil",
+    "tl",
+  ];
+}
+
+/**
+ * OpenAI 지원 언어 목록 가져오기
+ */
+export function getOpenAISupportedLanguages(): string[] {
+  if (typeof window === "undefined") {
+    return getDefaultOpenAISupportedLanguages();
+  }
+  
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.OPENAI_SUPPORTED_LANGUAGES);
+    if (data) {
+      return JSON.parse(data);
+    }
+    // 기본값 반환
+    return getDefaultOpenAISupportedLanguages();
+  } catch (error) {
+    console.error("OpenAI 지원 언어 목록 로드 실패:", error);
+    return getDefaultOpenAISupportedLanguages();
+  }
+}
+
+/**
+ * OpenAI 지원 언어 목록 저장하기
+ */
+export function setOpenAISupportedLanguages(languages: string[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  
+  try {
+    localStorage.setItem(STORAGE_KEYS.OPENAI_SUPPORTED_LANGUAGES, JSON.stringify(languages));
+  } catch (error) {
+    console.error("OpenAI 지원 언어 목록 저장 실패:", error);
+  }
+}
+
+/**
+ * Claude 지원 언어 목록 가져오기
+ */
+export function getClaudeSupportedLanguages(): string[] {
+  if (typeof window === "undefined") {
+    return getDefaultOpenAISupportedLanguages(); // OpenAI와 동일한 기본값 사용
+  }
+  
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.CLAUDE_SUPPORTED_LANGUAGES);
+    if (data) {
+      return JSON.parse(data);
+    }
+    // 기본값 반환
+    return getDefaultOpenAISupportedLanguages();
+  } catch (error) {
+    console.error("Claude 지원 언어 목록 로드 실패:", error);
+    return getDefaultOpenAISupportedLanguages();
+  }
+}
+
+/**
+ * Claude 지원 언어 목록 저장하기
+ */
+export function setClaudeSupportedLanguages(languages: string[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  
+  try {
+    localStorage.setItem(STORAGE_KEYS.CLAUDE_SUPPORTED_LANGUAGES, JSON.stringify(languages));
+  } catch (error) {
+    console.error("Claude 지원 언어 목록 저장 실패:", error);
+  }
+}
+
+/**
+ * 번역 API 키 가져오기 (provider별)
+ */
+export function getTranslationApiKey(provider: string): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.TRANSLATION_API_KEYS);
+    if (data) {
+      const keys = JSON.parse(data);
+      return keys[provider] || "";
+    }
+    return "";
+  } catch (error) {
+    console.error("번역 API 키 로드 실패:", error);
+    return "";
+  }
+}
+
+/**
+ * 번역 API 키 저장하기 (provider별)
+ */
+export function setTranslationApiKey(provider: string, apiKey: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.TRANSLATION_API_KEYS);
+    const keys = data ? JSON.parse(data) : {};
+    keys[provider] = apiKey;
+    localStorage.setItem(STORAGE_KEYS.TRANSLATION_API_KEYS, JSON.stringify(keys));
+  } catch (error) {
+    console.error("번역 API 키 저장 실패:", error);
+  }
+}
+
+/**
+ * 모든 번역 API 키 가져오기
+ */
+export function getAllTranslationApiKeys(): Record<string, string> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.TRANSLATION_API_KEYS);
+    return data ? JSON.parse(data) : {};
+  } catch (error) {
+    console.error("번역 API 키 로드 실패:", error);
+    return {};
   }
 }
 

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import TranslationProgress from "@/components/TranslationProgress";
 import TranslationEditor from "@/components/TranslationEditor";
-import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getCurrentWork as getCurrentWorkStorage, getMergedTranslations } from "@/lib/storage";
+import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getCurrentWork as getCurrentWorkStorage, getMergedTranslations, getTranslationApiKey, setTranslationApiKey } from "@/lib/storage";
 import { calculateTranslationStatus, mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { findNameByLocale } from "@/lib/language-utils";
 import { getSourceInfo, parseXCStrings } from "@/lib/xcstrings-parser";
@@ -31,10 +31,10 @@ export default function Home() {
   });
   const [translationCancelToken, setTranslationCancelToken] = useState<{ cancelled: boolean } | null>(null);
   const [translationProvider, setTranslationProvider] = useState<string>("google-translator");
-  const [translationApiKey, setTranslationApiKey] = useState<string>("");
+  const [translationApiKey, setTranslationApiKeyState] = useState<string>("");
   const [isLoadingSaved, setIsLoadingSaved] = useState(true);
 
-  // 앱 시작 시 저장된 xcstrings 파일 자동 로드
+  // 앱 시작 시 저장된 xcstrings 파일 및 API 키 자동 로드
   useEffect(() => {
     const loadSavedXCStrings = () => {
       try {
@@ -61,6 +61,12 @@ export default function Home() {
         setIsLoadingSaved(false);
       }
     };
+
+    // 저장된 API 키 로드
+    const savedApiKey = getTranslationApiKey(translationProvider);
+    if (savedApiKey) {
+      setTranslationApiKeyState(savedApiKey);
+    }
 
     loadSavedXCStrings();
   }, []);
@@ -206,11 +212,16 @@ export default function Home() {
         onTranslationProviderChange={(provider) => {
           if (!translationProgress.isTranslating) {
             setTranslationProvider(provider);
+            // provider 변경 시 해당 provider의 저장된 API 키 로드
+            const savedApiKey = getTranslationApiKey(provider);
+            setTranslationApiKeyState(savedApiKey);
           }
         }}
         onTranslationApiKeyChange={(key) => {
           if (!translationProgress.isTranslating) {
-            setTranslationApiKey(key);
+            setTranslationApiKeyState(key);
+            // API 키를 로컬 스토리지에 저장
+            setTranslationApiKey(translationProvider, key);
           }
         }}
         isTranslating={translationProgress.isTranslating}
@@ -405,9 +416,6 @@ export default function Home() {
                                     console.error(`번역 실패 (${key}):`, result.error);
                                   } else if (result.translatedText && result.translatedText.trim()) {
                                     const translatedValue = result.translatedText.trim();
-                                    
-                                    // sourceInfo에서 정보 가져오기
-                                    const sourceInfo = getSourceInfo(xcstrings, key);
                                     
                                     // 번역값 저장 (sourceLanguage, sourceText, comment 포함)
                                     updateTranslationValue(
