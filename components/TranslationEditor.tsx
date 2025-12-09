@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getCurrentWork, updateTranslationValue, getMergedTranslations, deleteAdditionalTranslation } from "@/lib/storage";
+import { getCurrentWork, updateTranslationValue, getMergedTranslations, deleteAdditionalTranslation, deleteOriginalTranslation } from "@/lib/storage";
 import { getSourceInfo, getStringValue } from "@/lib/xcstrings-parser";
 import type { XCStrings } from "@/types/xcstrings";
 
@@ -134,8 +134,18 @@ export default function TranslationEditor({
   };
 
   const handleSelectAll = () => {
-    const additionalEntries = entries.filter((entry) => !entry.isOriginal);
-    setSelectedKeys(new Set(additionalEntries.map((e) => e.key)));
+    if (filter === "translated") {
+      // 번역 필터: 번역된 항목만 선택
+      setSelectedKeys(new Set(entries.map((e) => e.key)));
+    } else if (filter === "original") {
+      // 원본 필터: 원본 번역이 있는 항목만 선택
+      const originalEntries = entries.filter((entry) => entry.isOriginal);
+      setSelectedKeys(new Set(originalEntries.map((e) => e.key)));
+    } else if (filter === "additional") {
+      // 추가본 필터: 추가 번역이 있는 항목만 선택
+      const additionalEntries = entries.filter((entry) => entry.isAdditional);
+      setSelectedKeys(new Set(additionalEntries.map((e) => e.key)));
+    }
   };
 
   const handleDeselectAll = () => {
@@ -145,16 +155,30 @@ export default function TranslationEditor({
   const handleDeleteSelected = () => {
     if (!locale || selectedKeys.size === 0) return;
 
-    selectedKeys.forEach((key) => {
-      // 추가 번역에서 직접 삭제
-      deleteAdditionalTranslation(locale, key);
-    });
+    const keysToDelete = Array.from(selectedKeys);
+    
+    if (filter === "translated") {
+      // 번역 필터: 추가 번역만 삭제 (원본은 유지)
+      keysToDelete.forEach((key) => {
+        deleteAdditionalTranslation(locale, key);
+      });
+    } else if (filter === "original") {
+      // 원본 필터: 원본 번역 삭제
+      keysToDelete.forEach((key) => {
+        deleteOriginalTranslation(locale, key);
+      });
+    } else if (filter === "additional") {
+      // 추가본 필터: 추가 번역 삭제
+      keysToDelete.forEach((key) => {
+        deleteAdditionalTranslation(locale, key);
+      });
+    }
 
     setSelectedKeys(new Set());
     onTranslationUpdate?.();
     
     // 상태 업데이트를 위해 강제 리렌더링
-    setEntries((prev) => prev.filter((entry) => !selectedKeys.has(entry.key)));
+    setEntries((prev) => prev.filter((entry) => !keysToDelete.includes(entry.key)));
   };
 
   const getStatusColor = (entry: typeof entries[0]) => {
@@ -242,13 +266,13 @@ export default function TranslationEditor({
       <div className="flex items-center justify-between mb-4">
         <div className="text-sm text-gray-800">
           총 {entries.length}개 항목
-          {filter === "additional" && selectedKeys.size > 0 && (
+          {(filter === "translated" || filter === "original" || filter === "additional") && selectedKeys.size > 0 && (
             <span className="ml-2 text-blue-600 font-medium">
               ({selectedKeys.size}개 선택됨)
             </span>
           )}
         </div>
-        {filter === "additional" && entries.length > 0 && (
+        {(filter === "translated" || filter === "original" || filter === "additional") && entries.length > 0 && (
           <div className="flex gap-2">
             <button
               onClick={handleSelectAll}
@@ -268,7 +292,7 @@ export default function TranslationEditor({
                   onClick={handleDeleteSelected}
                   className="px-3 py-1.5 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
                 >
-                  선택 삭제 ({selectedKeys.size})
+                  {filter === "translated" ? "선택 번역 제거" : "선택 삭제"} ({selectedKeys.size})
                 </button>
               </>
             )}
@@ -281,13 +305,13 @@ export default function TranslationEditor({
           <div
             key={entry.key}
             className={`border rounded-lg p-4 ${getStatusColor(entry)} ${
-              filter === "additional" && selectedKeys.has(entry.key)
+              (filter === "translated" || filter === "original" || filter === "additional") && selectedKeys.has(entry.key)
                 ? "ring-2 ring-blue-500"
                 : ""
             }`}
           >
             <div className="flex items-center gap-2 mb-2">
-              {filter === "additional" && (
+              {(filter === "translated" || filter === "original" || filter === "additional") && (
                 <input
                   type="checkbox"
                   checked={selectedKeys.has(entry.key)}

@@ -315,6 +315,30 @@ export function deleteAdditionalTranslation(locale: string, key: string): void {
 }
 
 /**
+ * 원본 번역 삭제
+ */
+export function deleteOriginalTranslation(locale: string, key: string): void {
+  const originalWork = getOriginalWork();
+  
+  if (!originalWork[locale]) {
+    return;
+  }
+  
+  if (!originalWork[locale].originalTranslations) {
+    return;
+  }
+  
+  delete originalWork[locale].originalTranslations[key];
+  
+  // 빈 객체가 되면 originalTranslations를 빈 객체로 유지
+  if (Object.keys(originalWork[locale].originalTranslations).length === 0) {
+    originalWork[locale].originalTranslations = {};
+  }
+  
+  setOriginalWork(originalWork);
+}
+
+/**
  * 모든 작업 데이터 초기화
  */
 export function clearAllWork(): void {
