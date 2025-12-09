@@ -130,9 +130,9 @@ async function translateWithOpenAI(
   
   const prompt = buildAITranslationPrompt(text, targetLanguage, comment);
   
-  // gpt-4-turbo 또는 gpt-3.5-turbo 사용 (gpt-4는 일부 계정에서 접근 불가)
+  // gpt-5.1 또는 gpt-3.5-turbo 사용 (gpt-4는 일부 계정에서 접근 불가)
   try {
-    // 먼저 gpt-4-turbo 시도, 실패하면 gpt-3.5-turbo 사용
+    // 먼저 gpt-5.1 시도, 실패하면 gpt-3.5-turbo 사용
     const completion = await client.chat.completions.create({
       model: "gpt-5.1",
       messages: [
@@ -246,7 +246,7 @@ CRITICAL TRANSLATION RULES:
 1. DO NOT translate placeholders - Keep them EXACTLY as they appear in the original
 2. Placeholders in this text: ${placeholders.length > 0 ? placeholders.join(", ") : "none"}
 3. Examples of placeholders you MUST preserve: %lld, %@, %1$lld, %1$@, %2$s, %d, etc.
-4. DO NOT replace placeholders with translated text like "__자리 표시자_0__" or "__PLACEHOLDER_0__"
+4. DO NOT replace placeholders with translated text like "__PLACEHOLDER_0__" or "__placeholder_0__"
 5. Preserve line breaks (\\n) exactly as in the original text
 6. Use the sequence: \`xcodebuild -exportLocalizations\` → machine translation → \`xcodebuild -importLocalizations\`
 7. Maintain the exact format and structure of placeholders`;
@@ -256,7 +256,7 @@ CRITICAL TRANSLATION RULES:
     prompt += `\n\nContext/Note: ${comment}`;
   }
 
-  prompt += `\n\nText to translate:\n\n${text}\n\nTranslation (preserve ALL placeholders exactly as shown):`;
+  prompt += `\n\nText to translate:\n\n${text}\n\nProvide only the translation without any additional text or labels.`;
 
   return prompt;
 }
@@ -348,6 +348,9 @@ export async function translateText(
     
     // 앞뒤 공백 제거
     finalTranslated = finalTranslated.trim();
+    
+    // "번역 (모든 플레이스홀더를 표시된 그대로 유지):" 텍스트 제거
+    finalTranslated = finalTranslated.replace(/^번역\s*\(모든\s*플레이스홀더를\s*표시된\s*그대로\s*유지\)\s*:\s*/i, "").trim();
     
     // 플레이스홀더 복원
     if (preservePlaceholders && placeholders.length > 0) {
