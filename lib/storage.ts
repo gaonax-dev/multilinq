@@ -14,6 +14,7 @@ const STORAGE_KEYS = {
   OPENAI_SUPPORTED_LANGUAGES: "multilinq_openai_supported_languages", // OpenAI 지원 언어 목록
   CLAUDE_SUPPORTED_LANGUAGES: "multilinq_claude_supported_languages", // Claude 지원 언어 목록
   TRANSLATION_API_KEYS: "multilinq_translation_api_keys", // 번역 API 키들 (provider별)
+  TRANSLATION_PROVIDER: "multilinq_translation_provider", // 번역 제공자 선택값
 } as const;
 
 /**
@@ -514,6 +515,38 @@ export function getAllTranslationApiKeys(): Record<string, string> {
   } catch (error) {
     console.error("번역 API 키 로드 실패:", error);
     return {};
+  }
+}
+
+/**
+ * 번역 제공자 가져오기
+ */
+export function getTranslationProvider(): string {
+  if (typeof window === "undefined") {
+    return "google-translator";
+  }
+  
+  try {
+    const provider = localStorage.getItem(STORAGE_KEYS.TRANSLATION_PROVIDER);
+    return provider || "google-translator";
+  } catch (error) {
+    console.error("번역 제공자 로드 실패:", error);
+    return "google-translator";
+  }
+}
+
+/**
+ * 번역 제공자 저장하기
+ */
+export function setTranslationProvider(provider: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  
+  try {
+    localStorage.setItem(STORAGE_KEYS.TRANSLATION_PROVIDER, provider);
+  } catch (error) {
+    console.error("번역 제공자 저장 실패:", error);
   }
 }
 

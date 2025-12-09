@@ -16,6 +16,7 @@ interface SidebarProps {
   onXCStringsLoad: (xcstrings: XCStrings) => void;
   onLocaleSelect: (locale: string) => void;
   onTranslateAll: () => void;
+  onTranslateSelected?: () => void;
   onExport: (exportAll: boolean) => void;
   translationProvider?: TranslationProvider;
   translationApiKey?: string;
@@ -30,6 +31,7 @@ export default function Sidebar({
   onXCStringsLoad,
   onLocaleSelect,
   onTranslateAll,
+  onTranslateSelected,
   onExport,
   translationProvider: externalProvider,
   translationApiKey: externalApiKey,
@@ -180,10 +182,20 @@ export default function Sidebar({
             <div className="border-t border-gray-200 pt-4 space-y-2">
               <button
                 onClick={onTranslateAll}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                disabled={isTranslating}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 전체 언어 번역
               </button>
+              {onTranslateSelected && (
+                <button
+                  onClick={onTranslateSelected}
+                  disabled={isTranslating}
+                  className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  선택 언어 번역
+                </button>
+              )}
             </div>
 
             <div className="border-t border-gray-200 pt-4 space-y-2">

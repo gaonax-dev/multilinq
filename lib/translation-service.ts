@@ -124,27 +124,54 @@ async function translateWithOpenAI(
     throw new Error("OpenAI API 키가 필요합니다.");
   }
   
-  const OpenAI = await import("openai");
-  const openai = new OpenAI.OpenAI({ apiKey });
+  // OpenAI SDK import (Next.js API route에서 동적 import 사용)
+  const { default: OpenAI } = await import("openai");
+  const client = new OpenAI({ apiKey });
   
   const prompt = buildAITranslationPrompt(text, targetLanguage, comment);
   
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4",
-    messages: [
-      {
-        role: "system",
-        content: "You are a professional translator specializing in iOS app localization.",
-      },
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
-    temperature: 0.3,
-  });
-  
-  return completion.choices[0]?.message?.content || text;
+  // gpt-4-turbo 또는 gpt-3.5-turbo 사용 (gpt-4는 일부 계정에서 접근 불가)
+  try {
+    // 먼저 gpt-4-turbo 시도, 실패하면 gpt-3.5-turbo 사용
+    const completion = await client.chat.completions.create({
+      model: "gpt-5.1",
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional translator specializing in iOS app localization.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 0.3,
+    });
+    
+    return completion.choices[0]?.message?.content || text;
+  } catch (error: any) {
+    // gpt-4-turbo가 실패하면 gpt-3.5-turbo로 재시도
+    if (error?.status === 404 || error?.message?.includes("does not exist")) {
+      console.warn("gpt-4-turbo 모델을 사용할 수 없어 gpt-3.5-turbo로 재시도합니다.");
+      const completion = await client.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: "You are a professional translator specializing in iOS app localization.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 0.3,
+      });
+      
+      return completion.choices[0]?.message?.content || text;
+    }
+    throw error;
+  }
 }
 
 /**

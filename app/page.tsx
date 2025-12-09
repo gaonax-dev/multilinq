@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import TranslationProgress from "@/components/TranslationProgress";
 import TranslationEditor from "@/components/TranslationEditor";
-import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getCurrentWork as getCurrentWorkStorage, getMergedTranslations, getTranslationApiKey, setTranslationApiKey } from "@/lib/storage";
+import BatchTranslationProgress from "@/components/BatchTranslationProgress";
+import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getCurrentWork as getCurrentWorkStorage, getMergedTranslations, getTranslationApiKey, setTranslationApiKey, getTranslationProvider, setTranslationProvider as saveTranslationProvider } from "@/lib/storage";
 import { calculateTranslationStatus, mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { findNameByLocale } from "@/lib/language-utils";
 import { getSourceInfo, parseXCStrings } from "@/lib/xcstrings-parser";
@@ -16,6 +17,21 @@ interface TranslationProgressState {
   current: number;
   total: number;
   currentKey: string | null;
+}
+
+interface BatchTranslationProgressState {
+  isVisible: boolean;
+  totalLanguages: number;
+  currentLanguageIndex: number;
+  languages: Array<{
+    locale: string;
+    name: string;
+    current: number;
+    total: number;
+    status: "pending" | "translating" | "completed" | "error";
+    error?: string;
+  }>;
+  cancelToken: { cancelled: boolean } | null;
 }
 
 export default function Home() {
@@ -30,9 +46,16 @@ export default function Home() {
     currentKey: null,
   });
   const [translationCancelToken, setTranslationCancelToken] = useState<{ cancelled: boolean } | null>(null);
-  const [translationProvider, setTranslationProvider] = useState<string>("google-translator");
+  const [translationProvider, setTranslationProviderState] = useState<string>("google-translator");
   const [translationApiKey, setTranslationApiKeyState] = useState<string>("");
   const [isLoadingSaved, setIsLoadingSaved] = useState(true);
+  const [batchTranslationProgress, setBatchTranslationProgress] = useState<BatchTranslationProgressState>({
+    isVisible: false,
+    totalLanguages: 0,
+    currentLanguageIndex: -1,
+    languages: [],
+    cancelToken: null,
+  });
 
   // 앱 시작 시 저장된 xcstrings 파일 및 API 키 자동 로드
   useEffect(() => {
@@ -62,8 +85,12 @@ export default function Home() {
       }
     };
 
+    // 저장된 번역 제공자 로드
+    const savedProvider = getTranslationProvider();
+    setTranslationProviderState(savedProvider);
+    
     // 저장된 API 키 로드
-    const savedApiKey = getTranslationApiKey(translationProvider);
+    const savedApiKey = getTranslationApiKey(savedProvider);
     if (savedApiKey) {
       setTranslationApiKeyState(savedApiKey);
     }
@@ -111,6 +138,175 @@ export default function Home() {
     setSelectedLocale(locale);
   };
 
+  const translateLanguage = async (
+    locale: string,
+    cancelToken: { cancelled: boolean },
+    onProgress: (current: number, total: number) => void
+  ): Promise<{ success: number; total: number; error?: string }> => {
+    if (!xcstrings) {
+      return { success: 0, total: 0, error: "xcstrings 파일이 없습니다." };
+    }
+
+    const work = getCurrentWork();
+    const translation = work[locale];
+    if (!translation) {
+      return { success: 0, total: 0, error: "번역 데이터가 없습니다." };
+    }
+
+    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const originalTranslations = translation.originalTranslations || {};
+    const missingTranslatedKeys = sourceKeys.filter((key) => {
+      const value = originalTranslations[key];
+      return !value || typeof value !== "string" || value.trim().length === 0;
+    });
+
+    if (missingTranslatedKeys.length === 0) {
+      return { success: 0, total: sourceKeys.length };
+    }
+
+    // 유료 서비스의 경우 배치 번역 사용
+    const isPaidService = ["google-cloud", "deepl", "openai", "claude"].includes(translationProvider);
+    
+    if (isPaidService) {
+      // 배치 번역: 모든 키를 한 번에 번역
+      try {
+        const texts = missingTranslatedKeys.map((key) => {
+          const sourceInfo = getSourceInfo(xcstrings, key);
+          return {
+            key,
+            text: sourceInfo?.sourceText || key,
+            comment: sourceInfo?.comment,
+          };
+        }).filter((item) => item.text && item.text.trim());
+
+        if (texts.length === 0) {
+          return { success: 0, total: missingTranslatedKeys.length };
+        }
+
+        onProgress(0, texts.length);
+
+        const response = await fetch("/api/translate", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            texts: texts.map((t) => ({ key: t.key, text: t.text })),
+            sourceLanguage: xcstrings.sourceLanguage,
+            targetLanguage: locale,
+            provider: translationProvider,
+            apiKey: translationApiKey || undefined,
+            options: {
+              preservePlaceholders: true,
+              preserveLineBreaks: true,
+            },
+          }),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          let successCount = 0;
+
+          texts.forEach((item, index) => {
+            if (cancelToken.cancelled) {
+              return;
+            }
+
+            const translatedValue = result.results[item.key];
+            if (translatedValue && translatedValue.trim()) {
+              const sourceInfo = getSourceInfo(xcstrings, item.key);
+              updateTranslationValue(
+                locale,
+                item.key,
+                translatedValue.trim(),
+                xcstrings.sourceLanguage,
+                sourceInfo?.sourceText,
+                sourceInfo?.comment
+              );
+              successCount++;
+            }
+
+            onProgress(index + 1, texts.length);
+          });
+
+          return { success: successCount, total: texts.length };
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          return { success: 0, total: texts.length, error: errorData.error || "배치 번역 실패" };
+        }
+      } catch (error) {
+        console.error(`배치 번역 실패 (${locale}):`, error);
+        return { success: 0, total: missingTranslatedKeys.length, error: error instanceof Error ? error.message : "알 수 없는 오류" };
+      }
+    } else {
+      // 무료 서비스: 개별 번역 (기존 로직)
+      let successCount = 0;
+
+      for (let i = 0; i < missingTranslatedKeys.length; i++) {
+        if (cancelToken.cancelled) {
+          break;
+        }
+
+        const key = missingTranslatedKeys[i];
+        onProgress(i + 1, missingTranslatedKeys.length);
+
+        const sourceInfo = getSourceInfo(xcstrings, key);
+        const sourceText = sourceInfo?.sourceText || key;
+
+        if (!sourceText || !sourceText.trim()) {
+          continue;
+        }
+
+        try {
+          const response = await fetch("/api/translate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              text: sourceText,
+              sourceLanguage: xcstrings.sourceLanguage,
+              targetLanguage: locale,
+              provider: translationProvider,
+              apiKey: translationApiKey || undefined,
+              comment: sourceInfo?.comment,
+              options: {
+                preservePlaceholders: true,
+                preserveLineBreaks: true,
+              },
+            }),
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            if (result.translatedText && result.translatedText.trim()) {
+              const translatedValue = result.translatedText.trim();
+              updateTranslationValue(
+                locale,
+                key,
+                translatedValue,
+                xcstrings.sourceLanguage,
+                sourceInfo?.sourceText,
+                sourceInfo?.comment
+              );
+              successCount++;
+            }
+          }
+        } catch (error) {
+          console.error(`번역 실패 (${locale}/${key}):`, error);
+        }
+
+        // 무료 서비스만 딜레이 적용
+        const minDelay = 1000;
+        const maxDelay = 3000;
+        const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+
+      return { success: successCount, total: missingTranslatedKeys.length };
+    }
+  };
+
   const handleTranslateAll = async () => {
     if (!xcstrings) {
       alert("xcstrings 파일을 먼저 업로드하세요.");
@@ -118,11 +314,161 @@ export default function Home() {
     }
 
     const work = getCurrentWork();
-    const locales = Object.keys(work);
-    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const locales = Object.keys(work).filter((l) => l !== xcstrings.sourceLanguage);
+    
+    if (locales.length === 0) {
+      alert("번역할 언어가 없습니다.");
+      return;
+    }
 
-    // TODO: 실제 번역 API 호출 구현
-    alert(`전체 ${locales.length}개 언어 번역을 시작합니다.`);
+    const cancelToken = { cancelled: false };
+    const languages = locales.map((locale) => ({
+      locale,
+      name: findNameByLocale(locale) || locale,
+      current: 0,
+      total: 0,
+      status: "pending" as const,
+    }));
+
+    setBatchTranslationProgress({
+      isVisible: true,
+      totalLanguages: locales.length,
+      currentLanguageIndex: -1,
+      languages,
+      cancelToken,
+    });
+
+    try {
+      for (let i = 0; i < locales.length; i++) {
+        if (cancelToken.cancelled) {
+          break;
+        }
+
+        const locale = locales[i];
+        
+        // 현재 언어를 번역 중으로 표시
+        setBatchTranslationProgress((prev) => ({
+          ...prev,
+          currentLanguageIndex: i,
+          languages: prev.languages.map((lang) =>
+            lang.locale === locale ? { ...lang, status: "translating" as const } : lang
+          ),
+        }));
+
+        const result = await translateLanguage(locale, cancelToken, (current, total) => {
+          setBatchTranslationProgress((prev) => ({
+            ...prev,
+            languages: prev.languages.map((lang) =>
+              lang.locale === locale
+                ? { ...lang, current, total, status: "translating" as const }
+                : lang
+            ),
+          }));
+        });
+
+        // 완료 상태로 업데이트
+        setBatchTranslationProgress((prev) => ({
+          ...prev,
+          languages: prev.languages.map((lang) =>
+            lang.locale === locale
+              ? {
+                  ...lang,
+                  current: result.total,
+                  total: result.total,
+                  status: result.error ? ("error" as const) : ("completed" as const),
+                  error: result.error,
+                }
+              : lang
+          ),
+        }));
+
+        setRefreshKey((prev) => prev + 1);
+      }
+    } catch (error) {
+      console.error("전체 언어 번역 오류:", error);
+      alert(`번역 중 오류가 발생했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    }
+  };
+
+  const handleTranslateSelected = async () => {
+    if (!xcstrings) {
+      alert("xcstrings 파일을 먼저 업로드하세요.");
+      return;
+    }
+
+    const selectedLocales = getSelectedLanguages();
+    if (selectedLocales.length === 0) {
+      alert("번역할 언어를 선택하세요.");
+      return;
+    }
+
+    const cancelToken = { cancelled: false };
+    const languages = selectedLocales.map((locale) => ({
+      locale,
+      name: findNameByLocale(locale) || locale,
+      current: 0,
+      total: 0,
+      status: "pending" as const,
+    }));
+
+    setBatchTranslationProgress({
+      isVisible: true,
+      totalLanguages: selectedLocales.length,
+      currentLanguageIndex: -1,
+      languages,
+      cancelToken,
+    });
+
+    try {
+      for (let i = 0; i < selectedLocales.length; i++) {
+        if (cancelToken.cancelled) {
+          break;
+        }
+
+        const locale = selectedLocales[i];
+        
+        // 현재 언어를 번역 중으로 표시
+        setBatchTranslationProgress((prev) => ({
+          ...prev,
+          currentLanguageIndex: i,
+          languages: prev.languages.map((lang) =>
+            lang.locale === locale ? { ...lang, status: "translating" as const } : lang
+          ),
+        }));
+
+        const result = await translateLanguage(locale, cancelToken, (current, total) => {
+          setBatchTranslationProgress((prev) => ({
+            ...prev,
+            languages: prev.languages.map((lang) =>
+              lang.locale === locale
+                ? { ...lang, current, total, status: "translating" as const }
+                : lang
+            ),
+          }));
+        });
+
+        // 완료 상태로 업데이트
+        setBatchTranslationProgress((prev) => ({
+          ...prev,
+          languages: prev.languages.map((lang) =>
+            lang.locale === locale
+              ? {
+                  ...lang,
+                  current: result.total,
+                  total: result.total,
+                  status: result.error ? ("error" as const) : ("completed" as const),
+                  error: result.error,
+                }
+              : lang
+          ),
+        }));
+
+        setRefreshKey((prev) => prev + 1);
+      }
+    } catch (error) {
+      console.error("선택 언어 번역 오류:", error);
+      alert(`번역 중 오류가 발생했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    }
   };
 
   const handleExport = async (exportAll: boolean) => {
@@ -206,12 +552,15 @@ export default function Home() {
         onXCStringsLoad={handleXCStringsLoad}
         onLocaleSelect={handleLocaleSelect}
         onTranslateAll={handleTranslateAll}
+        onTranslateSelected={handleTranslateSelected}
         onExport={handleExport}
         translationProvider={translationProvider}
         translationApiKey={translationApiKey}
         onTranslationProviderChange={(provider) => {
           if (!translationProgress.isTranslating) {
-            setTranslationProvider(provider);
+            setTranslationProviderState(provider);
+            // 번역 제공자를 로컬 스토리지에 저장
+            saveTranslationProvider(provider);
             // provider 변경 시 해당 provider의 저장된 API 키 로드
             const savedApiKey = getTranslationApiKey(provider);
             setTranslationApiKeyState(savedApiKey);
@@ -358,41 +707,46 @@ export default function Home() {
                           try {
                             let translatedCount = 0;
 
-                            for (let i = 0; i < missingTranslatedKeys.length; i++) {
-                              const key = missingTranslatedKeys[i];
-                              
-                              if (cancelToken.cancelled) {
-                                break;
+                            // 유료 서비스의 경우 배치 번역 사용
+                            const isPaidService = ["google-cloud", "deepl", "openai", "claude"].includes(translationProvider);
+
+                            if (isPaidService) {
+                              // 배치 번역: 모든 키를 한 번에 번역
+                              const texts = missingTranslatedKeys.map((key) => {
+                                const sourceInfo = getSourceInfo(xcstrings, key);
+                                return {
+                                  key,
+                                  text: sourceInfo?.sourceText || key,
+                                  comment: sourceInfo?.comment,
+                                };
+                              }).filter((item) => item.text && item.text.trim());
+
+                              if (texts.length === 0) {
+                                setTranslationProgress({
+                                  isTranslating: false,
+                                  current: 0,
+                                  total: 0,
+                                  currentKey: null,
+                                });
+                                setTranslationCancelToken(null);
+                                return;
                               }
 
-                              // 진행률 업데이트 (시작 시)
                               setTranslationProgress((prev) => ({
                                 ...prev,
-                                currentKey: key,
-                                current: i,
+                                currentKey: "배치 번역 중...",
+                                current: 0,
+                                total: texts.length,
                               }));
-
-                              const sourceInfo = getSourceInfo(xcstrings, key);
-                              // 원본 텍스트가 없으면 키 자체를 원문으로 사용
-                              const sourceText = sourceInfo?.sourceText || key;
-                              
-                              if (!sourceText || !sourceText.trim()) {
-                                // 진행률만 업데이트하고 건너뛰기
-                                setTranslationProgress((prev) => ({
-                                  ...prev,
-                                  current: i + 1,
-                                }));
-                                continue;
-                              }
 
                               try {
                                 const response = await fetch("/api/translate", {
-                                  method: "POST",
+                                  method: "PUT",
                                   headers: {
                                     "Content-Type": "application/json",
                                   },
                                   body: JSON.stringify({
-                                    text: sourceText,
+                                    texts: texts.map((t) => ({ key: t.key, text: t.text })),
                                     sourceLanguage: xcstrings.sourceLanguage,
                                     targetLanguage: selectedLocale,
                                     provider: translationProvider,
@@ -404,58 +758,150 @@ export default function Home() {
                                   }),
                                 });
 
-                                if (!response.ok) {
-                                  const errorData = await response.json().catch(() => ({}));
-                                  const errorMessage = errorData.error || `번역 실패 (HTTP ${response.status})`;
-                                  console.error(`번역 실패 (${key}):`, errorMessage);
-                                  // 에러가 발생해도 계속 진행
-                                } else {
+                                if (response.ok) {
                                   const result = await response.json();
                                   
-                                  if (result.error) {
-                                    console.error(`번역 실패 (${key}):`, result.error);
-                                  } else if (result.translatedText && result.translatedText.trim()) {
-                                    const translatedValue = result.translatedText.trim();
-                                    
-                                    // 번역값 저장 (sourceLanguage, sourceText, comment 포함)
-                                    updateTranslationValue(
-                                      selectedLocale,
-                                      key,
-                                      translatedValue,
-                                      xcstrings.sourceLanguage,
-                                      sourceInfo?.sourceText,
-                                      sourceInfo?.comment
-                                    );
-                                    
-                                    // 저장 확인
-                                    const saved = getCurrentWorkStorage();
-                                    const savedAdditional = saved[selectedLocale]?.additionalTranslations?.[key];
-                                    if (savedAdditional === translatedValue) {
-                                      translatedCount++;
-                                      console.log(`✓ 번역 성공 및 저장 완료 (${i + 1}/${missingTranslatedKeys.length}): ${key} = "${translatedValue.substring(0, 30)}..."`);
-                                    } else {
-                                      console.error(`✗ 번역 저장 실패 (${key}): 저장된 값이 일치하지 않음. 저장된 값: "${savedAdditional}", 번역 값: "${translatedValue}"`);
+                                  texts.forEach((item, index) => {
+                                    if (cancelToken.cancelled) {
+                                      return;
                                     }
-                                  } else {
-                                    console.warn(`번역 결과가 비어있습니다 (${key})`, result);
-                                  }
+
+                                    const translatedValue = result.results[item.key];
+                                    if (translatedValue && translatedValue.trim()) {
+                                      const sourceInfo = getSourceInfo(xcstrings, item.key);
+                                      updateTranslationValue(
+                                        selectedLocale,
+                                        item.key,
+                                        translatedValue.trim(),
+                                        xcstrings.sourceLanguage,
+                                        sourceInfo?.sourceText,
+                                        sourceInfo?.comment
+                                      );
+                                      
+                                      // 저장 확인
+                                      const saved = getCurrentWorkStorage();
+                                      const savedAdditional = saved[selectedLocale]?.additionalTranslations?.[item.key];
+                                      if (savedAdditional === translatedValue.trim()) {
+                                        translatedCount++;
+                                        console.log(`✓ 번역 성공 및 저장 완료 (${index + 1}/${texts.length}): ${item.key} = "${translatedValue.trim().substring(0, 30)}..."`);
+                                      }
+                                    }
+
+                                    setTranslationProgress((prev) => ({
+                                      ...prev,
+                                      current: index + 1,
+                                      currentKey: item.key,
+                                    }));
+                                  });
+                                } else {
+                                  const errorData = await response.json().catch(() => ({}));
+                                  console.error("배치 번역 실패:", errorData.error || "알 수 없는 오류");
                                 }
                               } catch (error) {
-                                console.error(`번역 실패 (${key}):`, error);
-                                // 에러가 발생해도 계속 진행 (다음 항목 번역)
+                                console.error("배치 번역 오류:", error);
                               }
+                            } else {
+                              // 무료 서비스: 개별 번역 (기존 로직)
+                              for (let i = 0; i < missingTranslatedKeys.length; i++) {
+                                const key = missingTranslatedKeys[i];
+                                
+                                if (cancelToken.cancelled) {
+                                  break;
+                                }
 
-                              // 진행률 업데이트 (각 항목 처리 후)
-                              setTranslationProgress((prev) => ({
-                                ...prev,
-                                current: i + 1,
-                              }));
+                                // 진행률 업데이트 (시작 시)
+                                setTranslationProgress((prev) => ({
+                                  ...prev,
+                                  currentKey: key,
+                                  current: i,
+                                }));
 
-                              // API 제한을 위한 대기 (1초~3초 랜덤)
-                              const minDelay = 1000; // 1초
-                              const maxDelay = 3000; // 3초
-                              const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
-                              await new Promise((resolve) => setTimeout(resolve, delay));
+                                const sourceInfo = getSourceInfo(xcstrings, key);
+                                // 원본 텍스트가 없으면 키 자체를 원문으로 사용
+                                const sourceText = sourceInfo?.sourceText || key;
+                                
+                                if (!sourceText || !sourceText.trim()) {
+                                  // 진행률만 업데이트하고 건너뛰기
+                                  setTranslationProgress((prev) => ({
+                                    ...prev,
+                                    current: i + 1,
+                                  }));
+                                  continue;
+                                }
+
+                                try {
+                                  const response = await fetch("/api/translate", {
+                                    method: "POST",
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                    },
+                                    body: JSON.stringify({
+                                      text: sourceText,
+                                      sourceLanguage: xcstrings.sourceLanguage,
+                                      targetLanguage: selectedLocale,
+                                      provider: translationProvider,
+                                      apiKey: translationApiKey || undefined,
+                                      comment: sourceInfo?.comment,
+                                      options: {
+                                        preservePlaceholders: true,
+                                        preserveLineBreaks: true,
+                                      },
+                                    }),
+                                  });
+
+                                  if (!response.ok) {
+                                    const errorData = await response.json().catch(() => ({}));
+                                    const errorMessage = errorData.error || `번역 실패 (HTTP ${response.status})`;
+                                    console.error(`번역 실패 (${key}):`, errorMessage);
+                                    // 에러가 발생해도 계속 진행
+                                  } else {
+                                    const result = await response.json();
+                                    
+                                    if (result.error) {
+                                      console.error(`번역 실패 (${key}):`, result.error);
+                                    } else if (result.translatedText && result.translatedText.trim()) {
+                                      const translatedValue = result.translatedText.trim();
+                                      
+                                      // 번역값 저장 (sourceLanguage, sourceText, comment 포함)
+                                      updateTranslationValue(
+                                        selectedLocale,
+                                        key,
+                                        translatedValue,
+                                        xcstrings.sourceLanguage,
+                                        sourceInfo?.sourceText,
+                                        sourceInfo?.comment
+                                      );
+                                      
+                                      // 저장 확인
+                                      const saved = getCurrentWorkStorage();
+                                      const savedAdditional = saved[selectedLocale]?.additionalTranslations?.[key];
+                                      if (savedAdditional === translatedValue) {
+                                        translatedCount++;
+                                        console.log(`✓ 번역 성공 및 저장 완료 (${i + 1}/${missingTranslatedKeys.length}): ${key} = "${translatedValue.substring(0, 30)}..."`);
+                                      } else {
+                                        console.error(`✗ 번역 저장 실패 (${key}): 저장된 값이 일치하지 않음. 저장된 값: "${savedAdditional}", 번역 값: "${translatedValue}"`);
+                                      }
+                                    } else {
+                                      console.warn(`번역 결과가 비어있습니다 (${key})`, result);
+                                    }
+                                  }
+                                } catch (error) {
+                                  console.error(`번역 실패 (${key}):`, error);
+                                  // 에러가 발생해도 계속 진행 (다음 항목 번역)
+                                }
+
+                                // 진행률 업데이트 (각 항목 처리 후)
+                                setTranslationProgress((prev) => ({
+                                  ...prev,
+                                  current: i + 1,
+                                }));
+
+                                // 무료 서비스만 딜레이 적용
+                                const minDelay = 1000; // 1초
+                                const maxDelay = 3000; // 3초
+                                const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+                                await new Promise((resolve) => setTimeout(resolve, delay));
+                              }
                             }
                             
                             // 최종 진행률 업데이트
@@ -524,6 +970,26 @@ export default function Home() {
           )}
         </div>
       </main>
+
+      <BatchTranslationProgress
+        isVisible={batchTranslationProgress.isVisible}
+        totalLanguages={batchTranslationProgress.totalLanguages}
+        currentLanguageIndex={batchTranslationProgress.currentLanguageIndex}
+        languages={batchTranslationProgress.languages}
+        onCancel={() => {
+          if (batchTranslationProgress.cancelToken) {
+            batchTranslationProgress.cancelToken.cancelled = true;
+          }
+          setBatchTranslationProgress({
+            isVisible: false,
+            totalLanguages: 0,
+            currentLanguageIndex: -1,
+            languages: [],
+            cancelToken: null,
+          });
+          setRefreshKey((prev) => prev + 1);
+        }}
+      />
     </div>
   );
 }
