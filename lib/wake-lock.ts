@@ -47,3 +47,4 @@ export async function releaseWakeLock(): Promise<void> {
 export function isWakeLockActive(): boolean {
   return wakeLock !== null;
 }
+
