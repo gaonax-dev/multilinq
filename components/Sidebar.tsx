@@ -23,6 +23,7 @@ interface SidebarProps {
   onTranslationProviderChange?: (provider: TranslationProvider) => void;
   onTranslationApiKeyChange?: (key: string) => void;
   isTranslating?: boolean;
+  refreshKey?: number;
 }
 
 export default function Sidebar({
@@ -38,6 +39,7 @@ export default function Sidebar({
   onTranslationProviderChange,
   onTranslationApiKeyChange,
   isTranslating = false,
+  refreshKey = 0,
 }: SidebarProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [internalProvider, setInternalProvider] = useState<TranslationProvider>("google-translator");
@@ -176,6 +178,7 @@ export default function Sidebar({
                 selectedLocale={selectedLocale}
                 onLocaleSelect={onLocaleSelect}
                 translationProvider={translationProvider}
+                refreshKey={refreshKey}
               />
             </div>
 

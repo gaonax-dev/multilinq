@@ -102,7 +102,7 @@ export default function BatchTranslationProgress({
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-xs text-gray-600">
-                        {lang.current} / {lang.total} ({progress.toFixed(0)}%)
+                        {lang.current} / {lang.total}개 ({progress.toFixed(0)}%)
                       </span>
                       <span
                         className={`text-xs font-medium ${

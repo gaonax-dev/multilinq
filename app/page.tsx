@@ -9,8 +9,9 @@ import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTrans
 import { calculateTranslationStatus, mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { findNameByLocale } from "@/lib/language-utils";
 import { getSourceInfo, parseXCStrings } from "@/lib/xcstrings-parser";
+import { requestWakeLock, releaseWakeLock } from "@/lib/wake-lock";
 import type { XCStrings } from "@/types/xcstrings";
-import type { TranslationStatus } from "@/types/translation";
+import type { TranslationStatus, TranslationProvider } from "@/types/translation";
 
 interface TranslationProgressState {
   isTranslating: boolean;
@@ -46,7 +47,7 @@ export default function Home() {
     currentKey: null,
   });
   const [translationCancelToken, setTranslationCancelToken] = useState<{ cancelled: boolean } | null>(null);
-  const [translationProvider, setTranslationProviderState] = useState<string>("google-translator");
+  const [translationProvider, setTranslationProviderState] = useState<TranslationProvider>("google-translator");
   const [translationApiKey, setTranslationApiKeyState] = useState<string>("");
   const [isLoadingSaved, setIsLoadingSaved] = useState(true);
   const [batchTranslationProgress, setBatchTranslationProgress] = useState<BatchTranslationProgressState>({
@@ -87,7 +88,7 @@ export default function Home() {
 
     // 저장된 번역 제공자 로드
     const savedProvider = getTranslationProvider();
-    setTranslationProviderState(savedProvider);
+    setTranslationProviderState(savedProvider as TranslationProvider);
     
     // 저장된 API 키 로드
     const savedApiKey = getTranslationApiKey(savedProvider);
@@ -142,28 +143,64 @@ export default function Home() {
     locale: string,
     cancelToken: { cancelled: boolean },
     onProgress: (current: number, total: number) => void
-  ): Promise<{ success: number; total: number; error?: string }> => {
+  ): Promise<{ success: number; total: number; error?: string; cancelled?: boolean }> => {
     if (!xcstrings) {
       return { success: 0, total: 0, error: "xcstrings 파일이 없습니다." };
     }
 
     const work = getCurrentWork();
     const translation = work[locale];
-    if (!translation) {
-      return { success: 0, total: 0, error: "번역 데이터가 없습니다." };
-    }
-
+    
     const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
-    const originalTranslations = translation.originalTranslations || {};
+    
+    // 번역 데이터가 없는 경우, xcstrings 파일에서 직접 확인
+    let originalTranslations: Record<string, string> = {};
+    let additionalTranslations: Record<string, string> = {};
+    
+    if (translation) {
+      originalTranslations = translation.originalTranslations || {};
+      additionalTranslations = translation.additionalTranslations || {};
+    } else {
+      // 번역 데이터가 없으면 xcstrings 파일에서 직접 원본 번역 수집
+      sourceKeys.forEach((key) => {
+        const entry = xcstrings.strings[key];
+        if (entry?.localizations?.[locale]?.stringUnit?.value) {
+          const value = entry.localizations[locale].stringUnit.value;
+          if (value && value.trim()) {
+            originalTranslations[key] = value;
+          }
+        }
+      });
+    }
+    
     const missingTranslatedKeys = sourceKeys.filter((key) => {
-      const value = originalTranslations[key];
-      return !value || typeof value !== "string" || value.trim().length === 0;
+      // 원본 번역 확인
+      const originalValue = originalTranslations[key];
+      const hasOriginal = originalValue && typeof originalValue === "string" && originalValue.trim().length > 0;
+      
+      // 추가 번역 확인
+      const additionalValue = additionalTranslations[key];
+      const hasAdditional = additionalValue && typeof additionalValue === "string" && additionalValue.trim().length > 0;
+      
+      // 원본 번역도 없고 추가 번역도 없는 경우만 번역 대상
+      return !hasOriginal && !hasAdditional;
     });
 
     if (missingTranslatedKeys.length === 0) {
       return { success: 0, total: sourceKeys.length };
     }
 
+    // 번역 데이터가 없으면 기본 구조 생성
+    if (!translation) {
+      // xcstrings 파일에서 sourceLanguage 찾기
+      const sourceLanguage = xcstrings.sourceLanguage || "en";
+      // 첫 번째 키의 sourceInfo 가져오기
+      const firstKey = sourceKeys[0];
+      const sourceInfo = firstKey ? getSourceInfo(xcstrings, firstKey) : null;
+      
+      // 기본 번역 구조 생성 (실제로는 번역만 수행하고 저장은 updateTranslationValue에서 처리)
+    }
+    
     // 유료 서비스의 경우 배치 번역 사용
     const isPaidService = ["google-cloud", "deepl", "openai", "claude"].includes(translationProvider);
     
@@ -183,8 +220,10 @@ export default function Home() {
           return { success: 0, total: missingTranslatedKeys.length };
         }
 
+        // 초기 진행율 설정
         onProgress(0, texts.length);
 
+        // API 요청 전 진행율 표시 (번역 요청 중)
         const response = await fetch("/api/translate", {
           method: "PUT",
           headers: {
@@ -206,10 +245,12 @@ export default function Home() {
         if (response.ok) {
           const result = await response.json();
           let successCount = 0;
+          let processedCount = 0;
 
+          // 결과 처리 중 진행율 업데이트
           texts.forEach((item, index) => {
             if (cancelToken.cancelled) {
-              return;
+              return; // 취소되면 더 이상 처리하지 않음 (이미 처리된 항목은 저장됨)
             }
 
             const translatedValue = result.results[item.key];
@@ -226,10 +267,17 @@ export default function Home() {
               successCount++;
             }
 
-            onProgress(index + 1, texts.length);
+            processedCount++;
+            // 각 항목 처리 후 진행율 업데이트
+            onProgress(processedCount, texts.length);
           });
 
-          return { success: successCount, total: texts.length };
+          // 취소된 경우 실제 저장된 개수 반환
+          return { 
+            success: successCount, 
+            total: texts.length, 
+            cancelled: cancelToken.cancelled 
+          };
         } else {
           const errorData = await response.json().catch(() => ({}));
           return { success: 0, total: texts.length, error: errorData.error || "배치 번역 실패" };
@@ -303,7 +351,12 @@ export default function Home() {
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
-      return { success: successCount, total: missingTranslatedKeys.length };
+      // 취소된 경우 실제 저장된 개수 반환
+      return { 
+        success: successCount, 
+        total: missingTranslatedKeys.length,
+        cancelled: cancelToken.cancelled
+      };
     }
   };
 
@@ -321,14 +374,43 @@ export default function Home() {
       return;
     }
 
+    // Wake Lock 획득
+    await requestWakeLock();
+
     const cancelToken = { cancelled: false };
-    const languages = locales.map((locale) => ({
-      locale,
-      name: findNameByLocale(locale) || locale,
-      current: 0,
-      total: 0,
-      status: "pending" as const,
-    }));
+    
+    // 각 언어별 번역할 항목 수 미리 계산
+    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const languages = locales.map((locale) => {
+      const translation = work[locale];
+      if (!translation) {
+        return {
+          locale,
+          name: findNameByLocale(locale) || locale,
+          current: 0,
+          total: sourceKeys.length,
+          status: "pending" as const,
+        };
+      }
+      
+      const originalTranslations = translation.originalTranslations || {};
+      const additionalTranslations = translation.additionalTranslations || {};
+      const missingCount = sourceKeys.filter((key) => {
+        const originalValue = originalTranslations[key];
+        const hasOriginal = originalValue && typeof originalValue === "string" && originalValue.trim().length > 0;
+        const additionalValue = additionalTranslations[key];
+        const hasAdditional = additionalValue && typeof additionalValue === "string" && additionalValue.trim().length > 0;
+        return !hasOriginal && !hasAdditional;
+      }).length;
+      
+      return {
+        locale,
+        name: findNameByLocale(locale) || locale,
+        current: 0,
+        total: missingCount,
+        status: "pending" as const,
+      };
+    });
 
     setBatchTranslationProgress({
       isVisible: true,
@@ -346,86 +428,21 @@ export default function Home() {
 
         const locale = locales[i];
         
-        // 현재 언어를 번역 중으로 표시
-        setBatchTranslationProgress((prev) => ({
-          ...prev,
-          currentLanguageIndex: i,
-          languages: prev.languages.map((lang) =>
-            lang.locale === locale ? { ...lang, status: "translating" as const } : lang
-          ),
-        }));
-
-        const result = await translateLanguage(locale, cancelToken, (current, total) => {
+        // 번역할 항목이 0개인 언어는 건너뛰기
+        const languageInfo = languages.find((lang) => lang.locale === locale);
+        if (languageInfo && languageInfo.total === 0) {
+          // 번역할 항목이 없으면 완료 상태로 표시
           setBatchTranslationProgress((prev) => ({
             ...prev,
             languages: prev.languages.map((lang) =>
               lang.locale === locale
-                ? { ...lang, current, total, status: "translating" as const }
+                ? { ...lang, status: "completed" as const, current: 0, total: 0 }
                 : lang
             ),
           }));
-        });
-
-        // 완료 상태로 업데이트
-        setBatchTranslationProgress((prev) => ({
-          ...prev,
-          languages: prev.languages.map((lang) =>
-            lang.locale === locale
-              ? {
-                  ...lang,
-                  current: result.total,
-                  total: result.total,
-                  status: result.error ? ("error" as const) : ("completed" as const),
-                  error: result.error,
-                }
-              : lang
-          ),
-        }));
-
-        setRefreshKey((prev) => prev + 1);
-      }
-    } catch (error) {
-      console.error("전체 언어 번역 오류:", error);
-      alert(`번역 중 오류가 발생했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
-    }
-  };
-
-  const handleTranslateSelected = async () => {
-    if (!xcstrings) {
-      alert("xcstrings 파일을 먼저 업로드하세요.");
-      return;
-    }
-
-    const selectedLocales = getSelectedLanguages();
-    if (selectedLocales.length === 0) {
-      alert("번역할 언어를 선택하세요.");
-      return;
-    }
-
-    const cancelToken = { cancelled: false };
-    const languages = selectedLocales.map((locale) => ({
-      locale,
-      name: findNameByLocale(locale) || locale,
-      current: 0,
-      total: 0,
-      status: "pending" as const,
-    }));
-
-    setBatchTranslationProgress({
-      isVisible: true,
-      totalLanguages: selectedLocales.length,
-      currentLanguageIndex: -1,
-      languages,
-      cancelToken,
-    });
-
-    try {
-      for (let i = 0; i < selectedLocales.length; i++) {
-        if (cancelToken.cancelled) {
-          break;
+          setRefreshKey((prev) => prev + 1);
+          continue;
         }
-
-        const locale = selectedLocales[i];
         
         // 현재 언어를 번역 중으로 표시
         setBatchTranslationProgress((prev) => ({
@@ -456,8 +473,138 @@ export default function Home() {
                   ...lang,
                   current: result.total,
                   total: result.total,
-                  status: result.error ? ("error" as const) : ("completed" as const),
-                  error: result.error,
+                  status: result.error ? ("error" as const) : (result.cancelled ? ("error" as const) : ("completed" as const)),
+                  error: result.error || (result.cancelled ? `취소됨 (${result.success}개 저장됨)` : undefined),
+                }
+              : lang
+          ),
+        }));
+
+        setRefreshKey((prev) => prev + 1);
+      }
+    } catch (error) {
+      console.error("전체 언어 번역 오류:", error);
+      alert(`번역 중 오류가 발생했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    } finally {
+      // Wake Lock 해제
+      await releaseWakeLock();
+    }
+  };
+
+  const handleTranslateSelected = async () => {
+    if (!xcstrings) {
+      alert("xcstrings 파일을 먼저 업로드하세요.");
+      return;
+    }
+
+    const selectedLocales = getSelectedLanguages();
+    if (selectedLocales.length === 0) {
+      alert("번역할 언어를 선택하세요.");
+      return;
+    }
+
+    // Wake Lock 획득
+    await requestWakeLock();
+
+    const cancelToken = { cancelled: false };
+    
+    // 각 언어별 번역할 항목 수 미리 계산
+    const work = getCurrentWork();
+    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const languages = selectedLocales.map((locale) => {
+      const translation = work[locale];
+      if (!translation) {
+        return {
+          locale,
+          name: findNameByLocale(locale) || locale,
+          current: 0,
+          total: sourceKeys.length,
+          status: "pending" as const,
+        };
+      }
+      
+      const originalTranslations = translation.originalTranslations || {};
+      const additionalTranslations = translation.additionalTranslations || {};
+      const missingCount = sourceKeys.filter((key) => {
+        const originalValue = originalTranslations[key];
+        const hasOriginal = originalValue && typeof originalValue === "string" && originalValue.trim().length > 0;
+        const additionalValue = additionalTranslations[key];
+        const hasAdditional = additionalValue && typeof additionalValue === "string" && additionalValue.trim().length > 0;
+        return !hasOriginal && !hasAdditional;
+      }).length;
+      
+      return {
+        locale,
+        name: findNameByLocale(locale) || locale,
+        current: 0,
+        total: missingCount,
+        status: "pending" as const,
+      };
+    });
+
+    setBatchTranslationProgress({
+      isVisible: true,
+      totalLanguages: selectedLocales.length,
+      currentLanguageIndex: -1,
+      languages,
+      cancelToken,
+    });
+
+    try {
+      for (let i = 0; i < selectedLocales.length; i++) {
+        if (cancelToken.cancelled) {
+          break;
+        }
+
+        const locale = selectedLocales[i];
+        
+        // 번역할 항목이 0개인 언어는 건너뛰기
+        const languageInfo = languages.find((lang) => lang.locale === locale);
+        if (languageInfo && languageInfo.total === 0) {
+          // 번역할 항목이 없으면 완료 상태로 표시
+          setBatchTranslationProgress((prev) => ({
+            ...prev,
+            languages: prev.languages.map((lang) =>
+              lang.locale === locale
+                ? { ...lang, status: "completed" as const, current: 0, total: 0 }
+                : lang
+            ),
+          }));
+          setRefreshKey((prev) => prev + 1);
+          continue;
+        }
+        
+        // 현재 언어를 번역 중으로 표시
+        setBatchTranslationProgress((prev) => ({
+          ...prev,
+          currentLanguageIndex: i,
+          languages: prev.languages.map((lang) =>
+            lang.locale === locale ? { ...lang, status: "translating" as const } : lang
+          ),
+        }));
+
+        const result = await translateLanguage(locale, cancelToken, (current, total) => {
+          setBatchTranslationProgress((prev) => ({
+            ...prev,
+            languages: prev.languages.map((lang) =>
+              lang.locale === locale
+                ? { ...lang, current, total, status: "translating" as const }
+                : lang
+            ),
+          }));
+        });
+
+        // 완료 상태로 업데이트
+        setBatchTranslationProgress((prev) => ({
+          ...prev,
+          languages: prev.languages.map((lang) =>
+            lang.locale === locale
+              ? {
+                  ...lang,
+                  current: result.total,
+                  total: result.total,
+                  status: result.error ? ("error" as const) : (result.cancelled ? ("error" as const) : ("completed" as const)),
+                  error: result.error || (result.cancelled ? `취소됨 (${result.success}개 저장됨)` : undefined),
                 }
               : lang
           ),
@@ -468,6 +615,9 @@ export default function Home() {
     } catch (error) {
       console.error("선택 언어 번역 오류:", error);
       alert(`번역 중 오류가 발생했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    } finally {
+      // Wake Lock 해제
+      await releaseWakeLock();
     }
   };
 
@@ -574,6 +724,7 @@ export default function Home() {
           }
         }}
         isTranslating={translationProgress.isTranslating}
+        refreshKey={refreshKey}
       />
 
       <main className="flex-1 overflow-y-auto bg-gray-50">
@@ -607,7 +758,7 @@ export default function Home() {
                             번역 진행 중...
                           </span>
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               if (translationCancelToken) {
                                 translationCancelToken.cancelled = true;
                                 setTranslationCancelToken(null);
@@ -619,6 +770,8 @@ export default function Home() {
                                 });
                                 alert(`번역이 취소되었습니다. ${translationProgress.current}개 항목이 저장되었습니다.`);
                                 setRefreshKey((prev) => prev + 1);
+                                // Wake Lock 해제
+                                await releaseWakeLock();
                               }
                             }}
                             className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm font-medium"
@@ -653,13 +806,22 @@ export default function Home() {
                           if (!translation) return;
 
                           const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
-                          // 원본 번역만 확인 (추가 번역 제외)
+                          // 원본 번역과 추가 번역 모두 확인
                           const originalTranslations = translation.originalTranslations || {};
-                          // 원본 번역이 없는 항목만 필터링 (번역이 없는 항목만 번역)
+                          const additionalTranslations = translation.additionalTranslations || {};
+                          // 원본 번역도 없고 추가 번역도 없는 항목만 필터링 (번역이 없는 항목만 번역)
                           const missingTranslatedKeys = sourceKeys.filter(
                             (key) => {
-                              const value = originalTranslations[key];
-                              return !value || typeof value !== "string" || value.trim().length === 0;
+                              // 원본 번역 확인
+                              const originalValue = originalTranslations[key];
+                              const hasOriginal = originalValue && typeof originalValue === "string" && originalValue.trim().length > 0;
+                              
+                              // 추가 번역 확인
+                              const additionalValue = additionalTranslations[key];
+                              const hasAdditional = additionalValue && typeof additionalValue === "string" && additionalValue.trim().length > 0;
+                              
+                              // 원본 번역도 없고 추가 번역도 없는 경우만 번역 대상
+                              return !hasOriginal && !hasAdditional;
                             }
                           );
 
@@ -693,6 +855,9 @@ export default function Home() {
                             alert("번역할 항목이 없습니다. 모든 항목이 원본 번역을 가지고 있습니다.");
                             return;
                           }
+
+                          // Wake Lock 획득
+                          await requestWakeLock();
 
                           // 번역 시작
                           const cancelToken = { cancelled: false };
@@ -732,9 +897,10 @@ export default function Home() {
                                 return;
                               }
 
+                              // 초기 진행율 설정
                               setTranslationProgress((prev) => ({
                                 ...prev,
-                                currentKey: "배치 번역 중...",
+                                currentKey: "번역 요청 중...",
                                 current: 0,
                                 total: texts.length,
                               }));
@@ -759,11 +925,20 @@ export default function Home() {
                                 });
 
                                 if (response.ok) {
+                                  // 번역 결과 수신 완료, 처리 시작
+                                  setTranslationProgress((prev) => ({
+                                    ...prev,
+                                    currentKey: "번역 결과 처리 중...",
+                                    current: 0,
+                                  }));
+
                                   const result = await response.json();
                                   
+                                  // 결과 처리 중 진행율 업데이트
+                                  let processedCount = 0;
                                   texts.forEach((item, index) => {
                                     if (cancelToken.cancelled) {
-                                      return;
+                                      return; // 취소되면 더 이상 처리하지 않음 (이미 처리된 항목은 저장됨)
                                     }
 
                                     const translatedValue = result.results[item.key];
@@ -787,12 +962,19 @@ export default function Home() {
                                       }
                                     }
 
+                                    processedCount++;
+                                    // 각 항목 처리 후 진행율 업데이트
                                     setTranslationProgress((prev) => ({
                                       ...prev,
-                                      current: index + 1,
+                                      current: processedCount,
                                       currentKey: item.key,
                                     }));
                                   });
+                                  
+                                  // 취소된 경우 저장된 개수 알림
+                                  if (cancelToken.cancelled && translatedCount > 0) {
+                                    alert(`번역이 취소되었습니다. ${translatedCount}개 항목이 저장되었습니다.`);
+                                  }
                                 } else {
                                   const errorData = await response.json().catch(() => ({}));
                                   console.error("배치 번역 실패:", errorData.error || "알 수 없는 오류");
@@ -916,6 +1098,13 @@ export default function Home() {
                               } else {
                                 alert(`번역 완료: ${missingTranslatedKeys.length}개 항목을 처리했지만 번역 결과가 없습니다. 콘솔을 확인하세요.`);
                               }
+                            } else {
+                              // 취소된 경우 저장된 개수 알림
+                              if (translatedCount > 0) {
+                                alert(`번역이 취소되었습니다. ${translatedCount}개 항목이 저장되었습니다.`);
+                              } else {
+                                alert(`번역이 취소되었습니다.`);
+                              }
                             }
 
                             setTranslationProgress({
@@ -937,6 +1126,9 @@ export default function Home() {
                             });
                             setTranslationCancelToken(null);
                             setRefreshKey((prev) => prev + 1);
+                          } finally {
+                            // Wake Lock 해제
+                            await releaseWakeLock();
                           }
                         }}
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
@@ -976,7 +1168,7 @@ export default function Home() {
         totalLanguages={batchTranslationProgress.totalLanguages}
         currentLanguageIndex={batchTranslationProgress.currentLanguageIndex}
         languages={batchTranslationProgress.languages}
-        onCancel={() => {
+        onCancel={async () => {
           if (batchTranslationProgress.cancelToken) {
             batchTranslationProgress.cancelToken.cancelled = true;
           }
@@ -988,6 +1180,8 @@ export default function Home() {
             cancelToken: null,
           });
           setRefreshKey((prev) => prev + 1);
+          // Wake Lock 해제
+          await releaseWakeLock();
         }}
       />
     </div>

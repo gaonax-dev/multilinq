@@ -79,14 +79,20 @@ export function generateLanguageTranslations(
   allLocales.forEach((locale) => {
     const translations: Record<string, string> = {};
     
+    // 첫 번째 키의 정보를 먼저 찾기 (info 설정용)
+    let firstKeyInfo: { sourceText: string; comment?: string } | null = null;
+    const firstKey = Object.keys(strings).find((key) => key !== "");
+    if (firstKey) {
+      const firstEntry = strings[firstKey];
+      const sourceText = getSourceStringValue(firstEntry, sourceLanguage, firstKey);
+      const comment = firstEntry.comment || firstEntry.localizations?.[sourceLanguage]?.comment;
+      firstKeyInfo = { sourceText: sourceText || "", comment };
+    }
+    
     Object.entries(strings).forEach(([key, entry]) => {
       if (key === "") {
         return; // 빈 키는 건너뛰기
       }
-      
-      // 기본 언어의 원문과 주석
-      const sourceText = getSourceStringValue(entry, sourceLanguage, key);
-      const comment = entry.comment || entry.localizations?.[sourceLanguage]?.comment;
       
       // 해당 언어의 번역값
       const translatedValue = getStringValue(entry, locale);
@@ -94,24 +100,18 @@ export function generateLanguageTranslations(
       if (translatedValue) {
         translations[key] = translatedValue;
       }
-      
-      // 첫 번째 키의 info를 저장 (기본 언어 정보)
-      if (!result[locale]) {
-        result[locale] = {
-          locale,
-          sourceLanguage,
-          info: {
-            sourceText: sourceText || "",
-            comment: comment,
-          },
-          originalTranslations: {},
-        };
-      }
     });
     
-    if (result[locale]) {
-      result[locale].originalTranslations = translations;
-    }
+    // 모든 언어에 대해 result 생성 (번역이 없어도 언어는 생성)
+    result[locale] = {
+      locale,
+      sourceLanguage,
+      info: firstKeyInfo || {
+        sourceText: "",
+        comment: undefined,
+      },
+      originalTranslations: translations,
+    };
   });
   
   return result;

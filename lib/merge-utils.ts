@@ -51,6 +51,7 @@ export function mergeXCStringsWithStorage(
     const newLang = newTranslations[locale];
     
     // 원본 번역 (xcstrings 파일에서 가져온 것)
+    // 원본 파일에서 이미 삭제된 번역은 자동으로 포함되지 않음
     const originalTranslations: Record<string, string> = { ...(newLang.originalTranslations || {}) };
     
     // 추가 번역 (기존 localStorage에 있던 것 중 원본에 있는 키)
@@ -110,7 +111,7 @@ export function saveMergedData(result: MergeResult): void {
   const additionalWork: Record<string, Record<string, string>> = {};
   
   Object.entries(result.merged).forEach(([locale, translation]) => {
-    // 원본 번역 저장
+    // 원본 번역 저장 (번역이 없어도 언어는 저장)
     originalWork[locale] = {
       locale: translation.locale,
       sourceLanguage: translation.sourceLanguage,

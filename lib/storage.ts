@@ -315,6 +315,41 @@ export function deleteAdditionalTranslation(locale: string, key: string): void {
 }
 
 /**
+ * 원본 xcstrings 파일에서 특정 언어의 번역 제거
+ */
+function removeTranslationFromOriginalXCStrings(locale: string, key: string): void {
+  const originalContent = getOriginalXCStrings();
+  if (!originalContent) {
+    return;
+  }
+  
+  try {
+    const xcstrings = JSON.parse(originalContent);
+    
+    // 해당 키의 entry가 있는지 확인
+    if (!xcstrings.strings || !xcstrings.strings[key]) {
+      return;
+    }
+    
+    const entry = xcstrings.strings[key];
+    
+    // localizations에서 해당 언어의 번역 제거
+    if (entry.localizations && entry.localizations[locale]) {
+      delete entry.localizations[locale];
+      
+      // localizations가 비어있으면 localizations 객체 자체를 제거할 수도 있지만,
+      // 다른 언어가 있을 수 있으므로 그대로 유지
+      
+      // 업데이트된 xcstrings를 다시 저장
+      const updatedContent = JSON.stringify(xcstrings, null, 2);
+      setOriginalXCStrings(updatedContent);
+    }
+  } catch (error) {
+    console.error("원본 xcstrings 파일에서 번역 제거 실패:", error);
+  }
+}
+
+/**
  * 원본 번역 삭제
  */
 export function deleteOriginalTranslation(locale: string, key: string): void {
@@ -328,6 +363,7 @@ export function deleteOriginalTranslation(locale: string, key: string): void {
     return;
   }
   
+  // localStorage의 originalWork에서 삭제
   delete originalWork[locale].originalTranslations[key];
   
   // 빈 객체가 되면 originalTranslations를 빈 객체로 유지
@@ -336,6 +372,10 @@ export function deleteOriginalTranslation(locale: string, key: string): void {
   }
   
   setOriginalWork(originalWork);
+  
+  // 저장된 원본 xcstrings 파일에서도 제거
+  // 원본 파일에서 제거하면 병합 로직이 실행될 때 자동으로 제외됨
+  removeTranslationFromOriginalXCStrings(locale, key);
 }
 
 /**

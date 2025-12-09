@@ -12,6 +12,7 @@ interface LanguageListProps {
   selectedLocale: string | null;
   onLocaleSelect: (locale: string) => void;
   translationProvider?: TranslationProvider;
+  refreshKey?: number;
 }
 
 export default function LanguageList({
@@ -19,6 +20,7 @@ export default function LanguageList({
   selectedLocale,
   onLocaleSelect,
   translationProvider,
+  refreshKey = 0,
 }: LanguageListProps) {
   const [languages, setLanguages] = useState<LanguageInfo[]>([]);
   const [selectedLocales, setSelectedLocalesState] = useState<string[]>([]);
@@ -57,31 +59,33 @@ export default function LanguageList({
 
     const langInfos: LanguageInfo[] = [];
 
-    // xcstrings에 있는 언어들
-    const localesInFile = new Set<string>();
+    // xcstrings 파일에서 모든 언어 수집 (generateLanguageTranslations 사용)
+    const allLocalesFromFile = new Set<string>();
     Object.values(xcstrings.strings).forEach((entry) => {
       if (entry.localizations) {
         Object.keys(entry.localizations).forEach((locale) => {
           if (locale !== xcstrings.sourceLanguage) {
-            localesInFile.add(locale);
+            allLocalesFromFile.add(locale);
           }
         });
       }
     });
 
-    // 작업 데이터에 있는 언어들
+    // 작업 데이터에 있는 언어들도 추가 (추가 번역만 있는 경우)
     Object.keys(work).forEach((locale) => {
       if (locale !== xcstrings.sourceLanguage) {
-        localesInFile.add(locale);
+        allLocalesFromFile.add(locale);
       }
     });
 
-    localesInFile.forEach((locale) => {
+    // 모든 언어에 대해 처리
+    allLocalesFromFile.forEach((locale) => {
       const translation = work[locale];
+      const langOption = TARGET_LANGUAGES.find((l) => l.locale === locale);
+      
       if (translation) {
+        // 작업 데이터에 있는 언어: 번역 상태 계산
         const status = calculateTranslationStatus(translation, sourceKeys);
-        const langOption = TARGET_LANGUAGES.find((l) => l.locale === locale);
-        
         langInfos.push({
           name: langOption?.name || locale,
           locale,
@@ -89,17 +93,27 @@ export default function LanguageList({
           isSelected: currentSelected.includes(locale),
         });
       } else {
-        // 번역 데이터가 없는 언어도 표시
-        const langOption = TARGET_LANGUAGES.find((l) => l.locale === locale);
+        // 작업 데이터에 없지만 xcstrings 파일에 있는 언어: 번역이 없는 상태로 표시
+        // xcstrings 파일에서 해당 언어의 번역 개수 확인
+        let translatedCount = 0;
+        Object.values(xcstrings.strings).forEach((entry) => {
+          if (entry.localizations && entry.localizations[locale]) {
+            const value = entry.localizations[locale]?.stringUnit?.value;
+            if (value && value.trim()) {
+              translatedCount++;
+            }
+          }
+        });
+        
         langInfos.push({
           name: langOption?.name || locale,
           locale,
           status: {
-            translated: 0,
+            translated: translatedCount,
             additional: 0,
             total: sourceKeys.length,
-            percentage: 0,
-            pending: 0,
+            percentage: sourceKeys.length > 0 ? (translatedCount / sourceKeys.length) * 100 : 0,
+            pending: sourceKeys.length - translatedCount,
           },
           isSelected: currentSelected.includes(locale),
         });
@@ -115,7 +129,7 @@ export default function LanguageList({
     });
 
     setLanguages(langInfos);
-  }, [xcstrings, selectedLocales]);
+  }, [xcstrings, selectedLocales, refreshKey]);
 
   const handleCheckboxChange = (locale: string, checked: boolean) => {
     const newSelected = checked
