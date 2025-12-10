@@ -61,8 +61,14 @@ export function mergeXCStringsWithStorage(
     // 기존 추가 번역 중 원본에 있는 키만 유지
     Object.entries(existingAdditional).forEach(([key, value]) => {
       if (originalKeys.has(key)) {
-        // 원본에 있는 키만 추가 번역으로 유지
-        additionalTranslations[key] = value;
+        // 원본에 있는 키인 경우
+        // 새로 업로드된 원본 번역이 있으면 추가 번역 제거 (원본 번역 우선)
+        // 원본 번역이 없으면 추가 번역 유지 (번역 작업으로 생성된 경우)
+        if (!originalTranslations[key] || !originalTranslations[key].trim()) {
+          // 원본 번역이 없으면 추가 번역으로 유지
+          additionalTranslations[key] = value;
+        }
+        // 원본 번역이 있으면 추가 번역 제거 (원본 번역 우선)
       } else {
         // 원본에 없는 키: 사용되지 않는 번역으로 분류
         if (!unused[locale]) {

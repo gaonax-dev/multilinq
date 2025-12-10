@@ -287,11 +287,24 @@ export function setOriginalXCStrings(content: string): void {
  * 원본과 추가 번역을 합산하여 반환 (내보내기 시 사용)
  */
 export function getMergedTranslations(translation: LanguageTranslation): Record<string, string> {
-  // 원본 + 추가 합산 (추가가 우선)
-  return {
-    ...(translation.originalTranslations || {}),
-    ...(translation.additionalTranslations || {}),
-  };
+  // 원본 + 추가 합산 (원본이 우선, 원본이 없으면 추가 사용)
+  const merged: Record<string, string> = {};
+  
+  // 먼저 추가 번역을 설정
+  const additionalTranslations = translation.additionalTranslations || {};
+  Object.entries(additionalTranslations).forEach(([key, value]) => {
+    merged[key] = value;
+  });
+  
+  // 그 다음 원본 번역으로 덮어씀 (원본 번역이 우선)
+  const originalTranslations = translation.originalTranslations || {};
+  Object.entries(originalTranslations).forEach(([key, value]) => {
+    if (value && value.trim()) {
+      merged[key] = value;
+    }
+  });
+  
+  return merged;
 }
 
 /**

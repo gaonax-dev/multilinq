@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getCurrentWork, updateTranslationValue, getMergedTranslations, deleteAdditionalTranslation, deleteOriginalTranslation } from "@/lib/storage";
+import { getCurrentWork, updateTranslationValue, getMergedTranslations, deleteAdditionalTranslation, deleteOriginalTranslation, getSelectedLanguages, setSelectedLanguages } from "@/lib/storage";
 import { getSourceInfo, getStringValue } from "@/lib/xcstrings-parser";
+import { calculateTranslationStatus } from "@/lib/merge-utils";
 import type { XCStrings } from "@/types/xcstrings";
 
 interface TranslationEditorProps {
@@ -154,7 +155,7 @@ export default function TranslationEditor({
   };
 
   const handleDeleteSelected = async () => {
-    if (!locale || selectedKeys.size === 0 || isDeleting) return;
+    if (!locale || selectedKeys.size === 0 || isDeleting || !xcstrings) return;
 
     const keysToDelete = Array.from(selectedKeys);
     setIsDeleting(true);
@@ -179,6 +180,26 @@ export default function TranslationEditor({
             keysToDelete.forEach((key) => {
               deleteAdditionalTranslation(locale, key);
             });
+          }
+
+          // 삭제 후 번역 상태 확인
+          const work = getCurrentWork();
+          const translation = work[locale];
+          const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+          
+          if (translation) {
+            const status = calculateTranslationStatus(translation, sourceKeys);
+            // 번역이 0%가 되면 선택된 언어 리스트에서도 제거
+            if (status.percentage === 0) {
+              const selectedLanguages = getSelectedLanguages();
+              const updatedSelected = selectedLanguages.filter((l) => l !== locale);
+              setSelectedLanguages(updatedSelected);
+            }
+          } else {
+            // 번역 데이터가 없으면 선택된 언어 리스트에서 제거
+            const selectedLanguages = getSelectedLanguages();
+            const updatedSelected = selectedLanguages.filter((l) => l !== locale);
+            setSelectedLanguages(updatedSelected);
           }
 
           setSelectedKeys(new Set());
