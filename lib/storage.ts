@@ -3,6 +3,7 @@
  */
 
 import type { LanguageTranslation } from "@/types/xcstrings";
+import { idbGetItem, idbRemoveItem, idbSetItem } from "@/lib/indexeddb";
 
 const STORAGE_KEYS = {
   ORIGINAL_WORK: "multilinq_original_work", // 원본 번역 (xcstrings 파일에서 읽어온 것)
@@ -16,6 +17,20 @@ const STORAGE_KEYS = {
   TRANSLATION_API_KEYS: "multilinq_translation_api_keys", // 번역 API 키들 (provider별)
   TRANSLATION_PROVIDER: "multilinq_translation_provider", // 번역 제공자 선택값
 } as const;
+
+function isQuotaExceededError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  // DOMException.name: 'QuotaExceededError' (대부분의 브라우저)
+  // code: 22 (Chrome/Safari), 1014 (Firefox)
+  const anyError = error as { name?: unknown; code?: unknown };
+  const name = typeof anyError.name === "string" ? anyError.name : "";
+  const code = typeof anyError.code === "number" ? anyError.code : -1;
+
+  return name === "QuotaExceededError" || code === 22 || code === 1014;
+}
 
 /**
  * 원본 번역 데이터 가져오기 (xcstrings 파일에서 읽어온 것)
@@ -258,20 +273,29 @@ export function setUnusedTranslations(
 /**
  * 원본 xcstrings 파일 저장 (병합 시 사용)
  */
-export function getOriginalXCStrings(): string | null {
+export async function getOriginalXCStrings(): Promise<string | null> {
   if (typeof window === "undefined") {
     return null;
   }
   
   try {
-    return localStorage.getItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
+    const fromLocal = localStorage.getItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
+    if (fromLocal) {
+      return fromLocal;
+    }
   } catch (error) {
     console.error("원본 xcstrings 로드 실패:", error);
+  }
+
+  try {
+    return await idbGetItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
+  } catch (error) {
+    console.error("원본 xcstrings(IndexedDB) 로드 실패:", error);
     return null;
   }
 }
 
-export function setOriginalXCStrings(content: string): void {
+export async function setOriginalXCStrings(content: string): Promise<void> {
   if (typeof window === "undefined") {
     return;
   }
@@ -279,6 +303,24 @@ export function setOriginalXCStrings(content: string): void {
   try {
     localStorage.setItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS, content);
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      // localStorage 용량 초과 시 IndexedDB로 폴백
+      try {
+        // localStorage에 남아있을 수 있는 기존 값을 제거 (일관성 유지)
+        localStorage.removeItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
+      } catch {
+        // ignore
+      }
+
+      try {
+        await idbSetItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS, content);
+        console.warn("원본 xcstrings가 커서 IndexedDB에 저장했습니다.");
+        return;
+      } catch (idbError) {
+        console.error("원본 xcstrings(IndexedDB) 저장 실패:", idbError);
+      }
+    }
+
     console.error("원본 xcstrings 저장 실패:", error);
   }
 }
@@ -330,8 +372,8 @@ export function deleteAdditionalTranslation(locale: string, key: string): void {
 /**
  * 원본 xcstrings 파일에서 특정 언어의 번역 제거
  */
-function removeTranslationFromOriginalXCStrings(locale: string, key: string): void {
-  const originalContent = getOriginalXCStrings();
+async function removeTranslationFromOriginalXCStrings(locale: string, key: string): Promise<void> {
+  const originalContent = await getOriginalXCStrings();
   if (!originalContent) {
     return;
   }
@@ -355,7 +397,7 @@ function removeTranslationFromOriginalXCStrings(locale: string, key: string): vo
       
       // 업데이트된 xcstrings를 다시 저장
       const updatedContent = JSON.stringify(xcstrings, null, 2);
-      setOriginalXCStrings(updatedContent);
+      await setOriginalXCStrings(updatedContent);
     }
   } catch (error) {
     console.error("원본 xcstrings 파일에서 번역 제거 실패:", error);
@@ -365,7 +407,7 @@ function removeTranslationFromOriginalXCStrings(locale: string, key: string): vo
 /**
  * 원본 번역 삭제
  */
-export function deleteOriginalTranslation(locale: string, key: string): void {
+export async function deleteOriginalTranslation(locale: string, key: string): Promise<void> {
   const originalWork = getOriginalWork();
   
   if (!originalWork[locale]) {
@@ -388,7 +430,7 @@ export function deleteOriginalTranslation(locale: string, key: string): void {
   
   // 저장된 원본 xcstrings 파일에서도 제거
   // 원본 파일에서 제거하면 병합 로직이 실행될 때 자동으로 제외됨
-  removeTranslationFromOriginalXCStrings(locale, key);
+  await removeTranslationFromOriginalXCStrings(locale, key);
 }
 
 /**
@@ -409,6 +451,11 @@ export function clearAllWork(): void {
   } catch (error) {
     console.error("작업 데이터 초기화 실패:", error);
   }
+
+  // IndexedDB 폴백 저장소도 함께 정리 (fire-and-forget)
+  void idbRemoveItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS).catch((error) => {
+    console.error("작업 데이터(IndexedDB) 초기화 실패:", error);
+  });
 }
 
 /**

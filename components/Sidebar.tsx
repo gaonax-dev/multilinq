@@ -72,7 +72,7 @@ export default function Sidebar({
       const parsed = parseXCStrings(content);
       
       // 원본 파일 저장
-      setOriginalXCStrings(content);
+      await setOriginalXCStrings(content);
       
       // 병합 로직 실행
       const result = mergeXCStringsWithStorage(parsed);

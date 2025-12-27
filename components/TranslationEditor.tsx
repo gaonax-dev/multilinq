@@ -165,50 +165,53 @@ export default function TranslationEditor({
       await new Promise<void>((resolve) => {
         // 다음 틱에서 실행하여 UI가 업데이트될 시간을 줌
         setTimeout(() => {
-          if (filter === "translated") {
-            // 번역 필터: 추가 번역만 삭제 (원본은 유지)
-            keysToDelete.forEach((key) => {
-              deleteAdditionalTranslation(locale, key);
-            });
-          } else if (filter === "original") {
-            // 원본 필터: 원본 번역 삭제
-            keysToDelete.forEach((key) => {
-              deleteOriginalTranslation(locale, key);
-            });
-          } else if (filter === "additional") {
-            // 추가본 필터: 추가 번역 삭제
-            keysToDelete.forEach((key) => {
-              deleteAdditionalTranslation(locale, key);
-            });
-          }
+          void (async () => {
+            if (filter === "translated") {
+              // 번역 필터: 추가 번역만 삭제 (원본은 유지)
+              keysToDelete.forEach((key) => {
+                deleteAdditionalTranslation(locale, key);
+              });
+            } else if (filter === "original") {
+              // 원본 필터: 원본 번역 삭제 (원본 xcstrings는 IndexedDB를 사용할 수 있어 async)
+              await Promise.all(keysToDelete.map((key) => deleteOriginalTranslation(locale, key)));
+            } else if (filter === "additional") {
+              // 추가본 필터: 추가 번역 삭제
+              keysToDelete.forEach((key) => {
+                deleteAdditionalTranslation(locale, key);
+              });
+            }
 
-          // 삭제 후 번역 상태 확인
-          const work = getCurrentWork();
-          const translation = work[locale];
-          const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
-          
-          if (translation) {
-            const status = calculateTranslationStatus(translation, sourceKeys);
-            // 번역이 0%가 되면 선택된 언어 리스트에서도 제거
-            if (status.percentage === 0) {
+            // 삭제 후 번역 상태 확인
+            const work = getCurrentWork();
+            const translation = work[locale];
+            const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+            
+            if (translation) {
+              const status = calculateTranslationStatus(translation, sourceKeys);
+              // 번역이 0%가 되면 선택된 언어 리스트에서도 제거
+              if (status.percentage === 0) {
+                const selectedLanguages = getSelectedLanguages();
+                const updatedSelected = selectedLanguages.filter((l) => l !== locale);
+                setSelectedLanguages(updatedSelected);
+              }
+            } else {
+              // 번역 데이터가 없으면 선택된 언어 리스트에서 제거
               const selectedLanguages = getSelectedLanguages();
               const updatedSelected = selectedLanguages.filter((l) => l !== locale);
               setSelectedLanguages(updatedSelected);
             }
-          } else {
-            // 번역 데이터가 없으면 선택된 언어 리스트에서 제거
-            const selectedLanguages = getSelectedLanguages();
-            const updatedSelected = selectedLanguages.filter((l) => l !== locale);
-            setSelectedLanguages(updatedSelected);
-          }
 
-          setSelectedKeys(new Set());
-          onTranslationUpdate?.();
-          
-          // 상태 업데이트를 위해 강제 리렌더링
-          setEntries((prev) => prev.filter((entry) => !keysToDelete.includes(entry.key)));
-          
-          resolve();
+            setSelectedKeys(new Set());
+            onTranslationUpdate?.();
+            
+            // 상태 업데이트를 위해 강제 리렌더링
+            setEntries((prev) => prev.filter((entry) => !keysToDelete.includes(entry.key)));
+            
+            resolve();
+          })().catch((error) => {
+            console.error("선택 삭제 실패:", error);
+            resolve();
+          });
         }, 0);
       });
     } finally {

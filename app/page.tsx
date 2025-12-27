@@ -60,9 +60,9 @@ export default function Home() {
 
   // 앱 시작 시 저장된 xcstrings 파일 및 API 키 자동 로드
   useEffect(() => {
-    const loadSavedXCStrings = () => {
+    const loadSavedXCStrings = async () => {
       try {
-        const savedContent = getOriginalXCStrings();
+        const savedContent = await getOriginalXCStrings();
         if (savedContent) {
           const parsed = parseXCStrings(savedContent);
           
@@ -96,7 +96,7 @@ export default function Home() {
       setTranslationApiKeyState(savedApiKey);
     }
 
-    loadSavedXCStrings();
+    void loadSavedXCStrings();
   }, []);
 
   useEffect(() => {
@@ -615,7 +615,7 @@ export default function Home() {
       return;
     }
 
-    const originalContent = getOriginalXCStrings();
+    const originalContent = await getOriginalXCStrings();
     if (!originalContent) {
       alert("원본 xcstrings 파일이 없습니다.");
       return;
