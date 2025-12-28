@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { getCurrentWork, updateTranslationValue, getMergedTranslations, deleteAdditionalTranslation, deleteOriginalTranslation, getSelectedLanguages, setSelectedLanguages } from "@/lib/storage";
-import { getSourceInfo, getStringValue } from "@/lib/xcstrings-parser";
+import { getSourceInfo, getStringValue, getTranslatableKeys } from "@/lib/xcstrings-parser";
 import { calculateTranslationStatus } from "@/lib/merge-utils";
 import type { XCStrings } from "@/types/xcstrings";
 
@@ -42,7 +42,7 @@ export default function TranslationEditor({
 
     const work = getCurrentWork();
     const translation = work[locale];
-    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const sourceKeys = getTranslatableKeys(xcstrings);
 
     // 병합된 번역 가져오기
     const mergedTranslations = translation ? getMergedTranslations(translation) : {};
@@ -184,7 +184,7 @@ export default function TranslationEditor({
             // 삭제 후 번역 상태 확인
             const work = getCurrentWork();
             const translation = work[locale];
-            const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+          const sourceKeys = getTranslatableKeys(xcstrings);
             
             if (translation) {
               const status = calculateTranslationStatus(translation, sourceKeys);

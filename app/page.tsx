@@ -8,7 +8,7 @@ import BatchTranslationProgress from "@/components/BatchTranslationProgress";
 import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getCurrentWork as getCurrentWorkStorage, getMergedTranslations, getTranslationApiKey, setTranslationApiKey, getTranslationProvider, setTranslationProvider as saveTranslationProvider } from "@/lib/storage";
 import { calculateTranslationStatus, mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { findNameByLocale } from "@/lib/language-utils";
-import { getSourceInfo, parseXCStrings } from "@/lib/xcstrings-parser";
+import { getSourceInfo, getTranslatableKeys, parseXCStrings } from "@/lib/xcstrings-parser";
 import { requestWakeLock, releaseWakeLock } from "@/lib/wake-lock";
 import type { XCStrings } from "@/types/xcstrings";
 import type { TranslationStatus, TranslationProvider } from "@/types/translation";
@@ -107,7 +107,7 @@ export default function Home() {
 
     const work = getCurrentWork();
     const translation = work[selectedLocale];
-    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const sourceKeys = getTranslatableKeys(xcstrings);
 
     if (translation) {
       const status = calculateTranslationStatus(translation, sourceKeys);
@@ -151,7 +151,7 @@ export default function Home() {
     const work = getCurrentWork();
     const translation = work[locale];
     
-    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const sourceKeys = getTranslatableKeys(xcstrings);
     
     // 번역 데이터가 없는 경우, xcstrings 파일에서 직접 확인
     let originalTranslations: Record<string, string> = {};
@@ -380,7 +380,7 @@ export default function Home() {
     const cancelToken = { cancelled: false };
     
     // 각 언어별 번역할 항목 수 미리 계산
-    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const sourceKeys = getTranslatableKeys(xcstrings);
     const allLanguages = allLocales.map((locale) => {
       const translation = work[locale];
       if (!translation) {
@@ -504,7 +504,7 @@ export default function Home() {
     
     // 각 언어별 번역할 항목 수 미리 계산
     const work = getCurrentWork();
-    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const sourceKeys = getTranslatableKeys(xcstrings);
     const allLanguages = allSelectedLocales.map((locale) => {
       const translation = work[locale];
       if (!translation) {
@@ -793,7 +793,7 @@ export default function Home() {
                           const translation = work[selectedLocale];
                           if (!translation) return;
 
-                          const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+                          const sourceKeys = getTranslatableKeys(xcstrings);
                           // 원본 번역과 추가 번역 모두 확인
                           const originalTranslations = translation.originalTranslations || {};
                           const additionalTranslations = translation.additionalTranslations || {};

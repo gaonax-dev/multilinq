@@ -5,6 +5,32 @@
 import type { XCStrings, StringEntry, LanguageTranslation } from "@/types/xcstrings";
 
 /**
+ * Xcode "Don't Translate" 키인지 여부
+ * - String Catalog(.xcstrings)에서 shouldTranslate=false인 경우 번역 대상에서 제외
+ */
+export function isDontTranslateEntry(entry: StringEntry | undefined | null): boolean {
+  if (!entry) {
+    return false;
+  }
+  return entry.shouldTranslate === false;
+}
+
+/**
+ * 번역 대상(Translatable) 키 목록
+ * - 빈 키("") 제외
+ * - "Don't Translate"로 표시된 키 제외
+ */
+export function getTranslatableKeys(xcstrings: XCStrings): string[] {
+  return Object.keys(xcstrings.strings).filter((key) => {
+    if (key === "") {
+      return false;
+    }
+    const entry = xcstrings.strings[key];
+    return !isDontTranslateEntry(entry);
+  });
+}
+
+/**
  * xcstrings 파일 파싱
  */
 export function parseXCStrings(content: string): XCStrings {
@@ -90,7 +116,7 @@ export function generateLanguageTranslations(
     }
     
     Object.entries(strings).forEach(([key, entry]) => {
-      if (key === "") {
+      if (key === "" || isDontTranslateEntry(entry)) {
         return; // 빈 키는 건너뛰기
       }
       

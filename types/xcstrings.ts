@@ -16,6 +16,11 @@ export interface StringEntry {
   localizations?: Record<string, Localization>;
   comment?: string;
   extractionState?: string;
+  /**
+   * Xcode String Catalog에서 "Don't Translate"로 표시된 경우 false가 될 수 있음.
+   * (파일 포맷에 존재하지만, 프로젝트마다 생성 여부가 달라 optional)
+   */
+  shouldTranslate?: boolean;
 }
 
 export interface XCStrings {

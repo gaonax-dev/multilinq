@@ -4,7 +4,7 @@
 
 import type { XCStrings, LanguageTranslation } from "@/types/xcstrings";
 import type { TranslationStatus } from "@/types/translation";
-import { generateLanguageTranslations, getSourceInfo } from "./xcstrings-parser";
+import { generateLanguageTranslations, getSourceInfo, isDontTranslateEntry } from "./xcstrings-parser";
 import {
   getOriginalWork,
   setOriginalWork,
@@ -41,6 +41,12 @@ export function mergeXCStringsWithStorage(
   
   // 3. 원본 파일의 모든 키 수집
   const originalKeys = new Set(Object.keys(xcstrings.strings).filter((k) => k !== ""));
+  // 3-1. "Don't Translate" 키 수집 (추가 번역은 제거하고, 카운트에서도 제외)
+  const dontTranslateKeys = new Set(
+    Object.entries(xcstrings.strings)
+      .filter(([key, entry]) => key !== "" && isDontTranslateEntry(entry))
+      .map(([key]) => key)
+  );
   
   // 4. 병합된 결과
   const merged: Record<string, LanguageTranslation> = {};
@@ -60,6 +66,11 @@ export function mergeXCStringsWithStorage(
     
     // 기존 추가 번역 중 원본에 있는 키만 유지
     Object.entries(existingAdditional).forEach(([key, value]) => {
+      // "Don't Translate"는 번역본을 저장/유지하지 않음 (추가 번역 삭제)
+      if (dontTranslateKeys.has(key)) {
+        return;
+      }
+
       if (originalKeys.has(key)) {
         // 원본에 있는 키인 경우
         // 새로 업로드된 원본 번역이 있으면 추가 번역 제거 (원본 번역 우선)

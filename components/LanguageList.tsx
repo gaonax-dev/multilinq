@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { TARGET_LANGUAGES } from "@/lib/language-utils";
 import { getCurrentWork, getSelectedLanguages, setSelectedLanguages, getOpenAISupportedLanguages, getClaudeSupportedLanguages } from "@/lib/storage";
 import { calculateTranslationStatus } from "@/lib/merge-utils";
+import { getTranslatableKeys } from "@/lib/xcstrings-parser";
 import type { XCStrings } from "@/types/xcstrings";
 import type { LanguageInfo, TranslationProvider } from "@/types/translation";
 
@@ -53,7 +54,7 @@ export default function LanguageList({
     }
 
     const work = getCurrentWork();
-    const sourceKeys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+    const sourceKeys = getTranslatableKeys(xcstrings);
     // selectedLocales가 있으면 사용, 없으면 localStorage에서 가져오기
     const currentSelected = selectedLocales.length > 0 ? selectedLocales : getSelectedLanguages();
 
@@ -96,12 +97,11 @@ export default function LanguageList({
         // 작업 데이터에 없지만 xcstrings 파일에 있는 언어: 번역이 없는 상태로 표시
         // xcstrings 파일에서 해당 언어의 번역 개수 확인
         let translatedCount = 0;
-        Object.values(xcstrings.strings).forEach((entry) => {
-          if (entry.localizations && entry.localizations[locale]) {
-            const value = entry.localizations[locale]?.stringUnit?.value;
-            if (value && value.trim()) {
-              translatedCount++;
-            }
+        sourceKeys.forEach((key) => {
+          const entry = xcstrings.strings[key];
+          const value = entry?.localizations?.[locale]?.stringUnit?.value;
+          if (value && value.trim()) {
+            translatedCount++;
           }
         });
         

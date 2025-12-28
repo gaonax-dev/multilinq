@@ -62,6 +62,27 @@ export async function POST(request: NextRequest) {
     const localesToExport = exportAll
       ? Object.keys(translations)
       : selectedLocales || [];
+
+    // "Don't Translate"(shouldTranslate=false)로 표시된 키는 번역본을 제거하고,
+    // 내보내기 결과에서도 해당 언어 번역을 포함하지 않음.
+    Object.entries(xcstrings.strings).forEach(([key, entry]) => {
+      if (key === "" || entry?.shouldTranslate !== false) {
+        return;
+      }
+      if (!entry.localizations) {
+        return;
+      }
+
+      localesToExport.forEach((locale) => {
+        // sourceLanguage는 건드리지 않음
+        if (locale === xcstrings.sourceLanguage) {
+          return;
+        }
+        if (entry.localizations && entry.localizations[locale]) {
+          delete entry.localizations[locale];
+        }
+      });
+    });
     
     // 각 언어의 번역을 xcstrings에 병합
     localesToExport.forEach((locale) => {
