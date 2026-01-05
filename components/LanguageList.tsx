@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { TARGET_LANGUAGES } from "@/lib/language-utils";
-import { getCurrentWork, getSelectedLanguages, setSelectedLanguages, getOpenAISupportedLanguages, getClaudeSupportedLanguages } from "@/lib/storage";
+import { getCurrentWork, getSelectedLanguages, setSelectedLanguages } from "@/lib/storage";
 import { calculateTranslationStatus } from "@/lib/merge-utils";
 import { getTranslatableKeys } from "@/lib/xcstrings-parser";
+import { getCurrentActiveFilenamePublic } from "@/lib/storage";
 import type { XCStrings } from "@/types/xcstrings";
 import type { LanguageInfo, TranslationProvider } from "@/types/translation";
 
@@ -25,27 +26,17 @@ export default function LanguageList({
 }: LanguageListProps) {
   const [languages, setLanguages] = useState<LanguageInfo[]>([]);
   const [selectedLocales, setSelectedLocalesState] = useState<string[]>([]);
-  const [openAISupportedLanguages, setOpenAISupportedLanguages] = useState<string[]>([]);
-  const [claudeSupportedLanguages, setClaudeSupportedLanguages] = useState<string[]>([]);
 
   // 초기 로드 시 selectedLocales 설정
   useEffect(() => {
-    const savedSelected = getSelectedLanguages();
+    if (!xcstrings) return;
+    const filename = getCurrentActiveFilenamePublic();
+    const savedSelected = getSelectedLanguages(filename);
     if (savedSelected.length > 0 && selectedLocales.length === 0) {
       setSelectedLocalesState(savedSelected);
     }
-  }, []);
+  }, [xcstrings]);
 
-  // OpenAI/Claude 지원 언어 목록 로드
-  useEffect(() => {
-    if (translationProvider === "openai") {
-      const supported = getOpenAISupportedLanguages();
-      setOpenAISupportedLanguages(supported);
-    } else if (translationProvider === "claude") {
-      const supported = getClaudeSupportedLanguages();
-      setClaudeSupportedLanguages(supported);
-    }
-  }, [translationProvider]);
 
   useEffect(() => {
     if (!xcstrings) {
@@ -53,10 +44,12 @@ export default function LanguageList({
       return;
     }
 
-    const work = getCurrentWork();
+    const filename = getCurrentActiveFilenamePublic();
     const sourceKeys = getTranslatableKeys(xcstrings);
+    const originalKeys = new Set(sourceKeys);
+    const work = getCurrentWork(filename, originalKeys);
     // selectedLocales가 있으면 사용, 없으면 localStorage에서 가져오기
-    const currentSelected = selectedLocales.length > 0 ? selectedLocales : getSelectedLanguages();
+    const currentSelected = selectedLocales.length > 0 ? selectedLocales : getSelectedLanguages(filename);
 
     const langInfos: LanguageInfo[] = [];
 
@@ -137,7 +130,8 @@ export default function LanguageList({
       : selectedLocales.filter((l) => l !== locale);
     
     setSelectedLocalesState(newSelected);
-    setSelectedLanguages(newSelected);
+    const filename = getCurrentActiveFilenamePublic();
+    setSelectedLanguages(newSelected, filename);
   };
 
   const getStatusEmoji = (status: LanguageInfo["status"]) => {
@@ -162,20 +156,10 @@ export default function LanguageList({
     );
   }
 
-  // OpenAI/Claude 선택 시 지원되지 않는 언어인지 확인
-  const isUnsupportedLanguage = (locale: string): boolean => {
-    if (translationProvider === "openai") {
-      return !openAISupportedLanguages.includes(locale);
-    } else if (translationProvider === "claude") {
-      return !claudeSupportedLanguages.includes(locale);
-    }
-    return false;
-  };
 
   return (
     <div className="space-y-1">
       {languages.map((lang) => {
-        const isUnsupported = isUnsupportedLanguage(lang.locale);
         return (
           <div
             key={lang.locale}
@@ -183,7 +167,7 @@ export default function LanguageList({
               selectedLocale === lang.locale
                 ? "bg-blue-50 border border-blue-200"
                 : "hover:bg-gray-50"
-            } ${isUnsupported ? "opacity-50" : ""}`}
+            }`}
             onClick={() => onLocaleSelect(lang.locale)}
           >
             <input
@@ -195,16 +179,15 @@ export default function LanguageList({
               }}
               onClick={(e) => e.stopPropagation()}
               className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-              disabled={isUnsupported}
             />
             
-            <span className={`flex-1 text-sm ${isUnsupported ? "text-gray-400 line-through" : ""}`}>
+            <span className="flex-1 text-sm">
               <span className="mr-2">{getStatusEmoji(lang.status)}</span>
-              <span className={`font-medium ${isUnsupported ? "text-gray-400" : "text-gray-900"}`}>{lang.name}</span>
-              <span className={`ml-2 ${isUnsupported ? "text-gray-400" : "text-gray-600"}`}>({lang.locale})</span>
+              <span className="font-medium text-gray-900">{lang.name}</span>
+              <span className="ml-2 text-gray-600">({lang.locale})</span>
             </span>
             
-            <span className={`text-xs font-medium ${isUnsupported ? "text-gray-400" : getStatusColor(lang.status)}`}>
+            <span className={`text-xs font-medium ${getStatusColor(lang.status)}`}>
               {lang.status.translated}
               {lang.status.additional > 0 && (
                 <>

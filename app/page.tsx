@@ -5,7 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import TranslationProgress from "@/components/TranslationProgress";
 import TranslationEditor from "@/components/TranslationEditor";
 import BatchTranslationProgress from "@/components/BatchTranslationProgress";
-import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getCurrentWork as getCurrentWorkStorage, getMergedTranslations, getTranslationApiKey, setTranslationApiKey, getTranslationProvider, setTranslationProvider as saveTranslationProvider } from "@/lib/storage";
+import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getMergedTranslations, getTranslationApiKey, setTranslationApiKey, getTranslationProvider, setTranslationProvider as saveTranslationProvider, getAdditionalWork, getOriginalFilename, getCurrentActiveFilenamePublic } from "@/lib/storage";
 import { calculateTranslationStatus, mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { findNameByLocale } from "@/lib/language-utils";
 import { getSourceInfo, getTranslatableKeys, parseXCStrings } from "@/lib/xcstrings-parser";
@@ -38,6 +38,7 @@ interface BatchTranslationProgressState {
 export default function Home() {
   const [xcstrings, setXCStrings] = useState<XCStrings | null>(null);
   const [selectedLocale, setSelectedLocale] = useState<string | null>(null);
+  const [currentFilename, setCurrentFilename] = useState<string | null>(null);
   const [translationStatus, setTranslationStatus] = useState<TranslationStatus | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [translationProgress, setTranslationProgress] = useState<TranslationProgressState>({
@@ -62,21 +63,30 @@ export default function Home() {
   useEffect(() => {
     const loadSavedXCStrings = async () => {
       try {
-        const savedContent = await getOriginalXCStrings();
-        if (savedContent) {
-          const parsed = parseXCStrings(savedContent);
+        // 현재 활성 파일명 가져오기
+        const activeFilename = getCurrentActiveFilenamePublic();
+        
+        if (activeFilename) {
+          // 활성 파일명이 있으면 해당 파일 로드
+          const savedContent = await getOriginalXCStrings(activeFilename);
           
-          // 병합 로직 실행
-          const result = mergeXCStringsWithStorage(parsed);
-          saveMergedData(result);
-          
-          setXCStrings(parsed);
-          
-          // 첫 번째 언어 자동 선택
-          const work = getCurrentWork();
-          const locales = Object.keys(work);
-          if (locales.length > 0) {
-            setSelectedLocale(locales[0]);
+          if (savedContent) {
+            const parsed = parseXCStrings(savedContent);
+            
+            // 병합 로직 실행
+            const result = mergeXCStringsWithStorage(parsed, activeFilename);
+            saveMergedData(result, activeFilename, result.originalKeys);
+            
+            setXCStrings(parsed);
+            setCurrentFilename(activeFilename);
+            
+            // 첫 번째 언어 자동 선택
+            const originalKeys = new Set(getTranslatableKeys(parsed));
+            const work = getCurrentWork(activeFilename, originalKeys);
+            const locales = Object.keys(work);
+            if (locales.length > 0) {
+              setSelectedLocale(locales[0]);
+            }
           }
         }
       } catch (error) {
@@ -105,9 +115,10 @@ export default function Home() {
       return;
     }
 
-    const work = getCurrentWork();
-    const translation = work[selectedLocale];
     const sourceKeys = getTranslatableKeys(xcstrings);
+    const originalKeys = new Set(sourceKeys);
+    const work = getCurrentWork(currentFilename, originalKeys);
+    const translation = work[selectedLocale];
 
     if (translation) {
       const status = calculateTranslationStatus(translation, sourceKeys);
@@ -121,12 +132,15 @@ export default function Home() {
         pending: 0,
       });
     }
-  }, [xcstrings, selectedLocale, refreshKey]);
+  }, [xcstrings, selectedLocale, refreshKey, currentFilename]);
 
-  const handleXCStringsLoad = (parsed: XCStrings) => {
+  const handleXCStringsLoad = (parsed: XCStrings, filename: string | null = null) => {
     setXCStrings(parsed);
+    setCurrentFilename(filename);
     // 첫 번째 언어 자동 선택
-    const work = getCurrentWork();
+    const sourceKeys = getTranslatableKeys(parsed);
+    const originalKeys = new Set(sourceKeys);
+    const work = getCurrentWork(filename, originalKeys);
     const locales = Object.keys(work);
     if (locales.length > 0) {
       setSelectedLocale(locales[0]);
@@ -148,10 +162,10 @@ export default function Home() {
       return { success: 0, total: 0, error: "xcstrings 파일이 없습니다." };
     }
 
-    const work = getCurrentWork();
-    const translation = work[locale];
-    
     const sourceKeys = getTranslatableKeys(xcstrings);
+    const originalKeys = new Set(sourceKeys);
+    const work = getCurrentWork(currentFilename, originalKeys);
+    const translation = work[locale];
     
     // 번역 데이터가 없는 경우, xcstrings 파일에서 직접 확인
     let originalTranslations: Record<string, string> = {};
@@ -262,7 +276,8 @@ export default function Home() {
                 translatedValue.trim(),
                 xcstrings.sourceLanguage,
                 sourceInfo?.sourceText,
-                sourceInfo?.comment
+                sourceInfo?.comment,
+                currentFilename
               );
               successCount++;
             }
@@ -335,7 +350,8 @@ export default function Home() {
                 translatedValue,
                 xcstrings.sourceLanguage,
                 sourceInfo?.sourceText,
-                sourceInfo?.comment
+                sourceInfo?.comment,
+                currentFilename
               );
               successCount++;
             }
@@ -366,7 +382,16 @@ export default function Home() {
       return;
     }
 
-    const work = getCurrentWork();
+    // API 키 필요 여부 확인
+    const isPaidService = ["google-cloud", "deepl", "openai", "claude"].includes(translationProvider);
+    if (isPaidService && (!translationApiKey || !translationApiKey.trim())) {
+      alert("API 키가 필요합니다. 번역 설정에서 API 키를 입력하세요.");
+      return;
+    }
+
+    const sourceKeys = getTranslatableKeys(xcstrings);
+    const originalKeys = new Set(sourceKeys);
+    const work = getCurrentWork(currentFilename, originalKeys);
     const allLocales = Object.keys(work).filter((l) => l !== xcstrings.sourceLanguage);
     
     if (allLocales.length === 0) {
@@ -380,7 +405,6 @@ export default function Home() {
     const cancelToken = { cancelled: false };
     
     // 각 언어별 번역할 항목 수 미리 계산
-    const sourceKeys = getTranslatableKeys(xcstrings);
     const allLanguages = allLocales.map((locale) => {
       const translation = work[locale];
       if (!translation) {
@@ -491,7 +515,14 @@ export default function Home() {
       return;
     }
 
-    const allSelectedLocales = getSelectedLanguages();
+    // API 키 필요 여부 확인
+    const isPaidService = ["google-cloud", "deepl", "openai", "claude"].includes(translationProvider);
+    if (isPaidService && (!translationApiKey || !translationApiKey.trim())) {
+      alert("API 키가 필요합니다. 번역 설정에서 API 키를 입력하세요.");
+      return;
+    }
+
+    const allSelectedLocales = getSelectedLanguages(currentFilename);
     if (allSelectedLocales.length === 0) {
       alert("번역할 언어를 선택하세요.");
       return;
@@ -503,8 +534,9 @@ export default function Home() {
     const cancelToken = { cancelled: false };
     
     // 각 언어별 번역할 항목 수 미리 계산
-    const work = getCurrentWork();
     const sourceKeys = getTranslatableKeys(xcstrings);
+    const originalKeys = new Set(sourceKeys);
+    const work = getCurrentWork(currentFilename, originalKeys);
     const allLanguages = allSelectedLocales.map((locale) => {
       const translation = work[locale];
       if (!translation) {
@@ -615,14 +647,16 @@ export default function Home() {
       return;
     }
 
-    const originalContent = await getOriginalXCStrings();
+    const originalContent = await getOriginalXCStrings(currentFilename);
     if (!originalContent) {
       alert("원본 xcstrings 파일이 없습니다.");
       return;
     }
 
-    const work = getCurrentWork();
-    const selectedLocales = exportAll ? Object.keys(work) : getSelectedLanguages();
+    const sourceKeys = getTranslatableKeys(xcstrings);
+    const originalKeys = new Set(sourceKeys);
+    const work = getCurrentWork(currentFilename, originalKeys);
+    const selectedLocales = exportAll ? Object.keys(work) : getSelectedLanguages(currentFilename);
 
     if (selectedLocales.length === 0) {
       alert("내보낼 언어를 선택하세요.");
@@ -658,12 +692,16 @@ export default function Home() {
 
       const data = await response.json();
       
+      // 파일명 결정: 원본 파일명이 있으면 사용, 없으면 기본값
+      const originalFilename = getOriginalFilename(currentFilename);
+      const filename = originalFilename || currentFilename || "Localizable.xcstrings";
+      
       // 파일 다운로드
       const blob = new Blob([data.content], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = data.filename || "Localizable.xcstrings";
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -789,11 +827,11 @@ export default function Home() {
                         onClick={async () => {
                           if (!xcstrings || !selectedLocale) return;
                           
-                          const work = getCurrentWork();
+                          const sourceKeys = getTranslatableKeys(xcstrings);
+                          const originalKeys = new Set(sourceKeys);
+                          const work = getCurrentWork(currentFilename, originalKeys);
                           const translation = work[selectedLocale];
                           if (!translation) return;
-
-                          const sourceKeys = getTranslatableKeys(xcstrings);
                           // 원본 번역과 추가 번역 모두 확인
                           const originalTranslations = translation.originalTranslations || {};
                           const additionalTranslations = translation.additionalTranslations || {};
@@ -841,6 +879,13 @@ export default function Home() {
 
                           if (missingTranslatedKeys.length === 0) {
                             alert("번역할 항목이 없습니다. 모든 항목이 원본 번역을 가지고 있습니다.");
+                            return;
+                          }
+
+                          // API 키 필요 여부 확인
+                          const isPaidService = ["google-cloud", "deepl", "openai", "claude"].includes(translationProvider);
+                          if (isPaidService && (!translationApiKey || !translationApiKey.trim())) {
+                            alert("API 키가 필요합니다. 번역 설정에서 API 키를 입력하세요.");
                             return;
                           }
 
@@ -938,12 +983,13 @@ export default function Home() {
                                         translatedValue.trim(),
                                         xcstrings.sourceLanguage,
                                         sourceInfo?.sourceText,
-                                        sourceInfo?.comment
+                                        sourceInfo?.comment,
+                                        currentFilename
                                       );
                                       
-                                      // 저장 확인
-                                      const saved = getCurrentWorkStorage();
-                                      const savedAdditional = saved[selectedLocale]?.additionalTranslations?.[item.key];
+                                      // 저장 확인 (직접 additionalWork에서 확인)
+                                      const savedAdditionalWork = getAdditionalWork(currentFilename);
+                                      const savedAdditional = savedAdditionalWork[selectedLocale]?.[item.key];
                                       if (savedAdditional === translatedValue.trim()) {
                                         translatedCount++;
                                         console.log(`✓ 번역 성공 및 저장 완료 (${index + 1}/${texts.length}): ${item.key} = "${translatedValue.trim().substring(0, 30)}..."`);
@@ -1039,12 +1085,13 @@ export default function Home() {
                                         translatedValue,
                                         xcstrings.sourceLanguage,
                                         sourceInfo?.sourceText,
-                                        sourceInfo?.comment
+                                        sourceInfo?.comment,
+                                        currentFilename
                                       );
                                       
-                                      // 저장 확인
-                                      const saved = getCurrentWorkStorage();
-                                      const savedAdditional = saved[selectedLocale]?.additionalTranslations?.[key];
+                                      // 저장 확인 (직접 additionalWork에서 확인)
+                                      const savedAdditionalWork = getAdditionalWork(currentFilename);
+                                      const savedAdditional = savedAdditionalWork[selectedLocale]?.[key];
                                       if (savedAdditional === translatedValue) {
                                         translatedCount++;
                                         console.log(`✓ 번역 성공 및 저장 완료 (${i + 1}/${missingTranslatedKeys.length}): ${key} = "${translatedValue.substring(0, 30)}..."`);

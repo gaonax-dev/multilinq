@@ -164,3 +164,52 @@ export function getSourceInfo(
   };
 }
 
+/**
+ * Info.plist 파일인지 확인 (키 이름으로 판단)
+ */
+export function isInfoPlistFile(xcstrings: XCStrings): boolean {
+  const keys = Object.keys(xcstrings.strings).filter((k) => k !== "");
+  if (keys.length === 0) {
+    return false;
+  }
+  
+  // Info.plist에만 있는 구체적인 키 패턴
+  // CFBundle으로 시작하는 키는 Info.plist에만 있음
+  // NS로 시작하지만 NSLocalizedString은 제외 (Localizable에 있을 수 있음)
+  // UI로 시작하지만 일반적인 UI 키는 제외
+  const infoPlistKeyPatterns = [
+    /^CFBundle/i, // CFBundleName, CFBundleDisplayName 등
+    /^NSHumanReadableCopyright/i,
+    /^NSPrincipalClass/i,
+    /^NSHighResolutionCapable/i,
+    /^NSSupportsAutomaticGraphicsSwitching/i,
+    /^UIApplication/i, // UIApplicationSceneManifest 등
+    /^UILaunchScreen/i,
+    /^UISupportedInterfaceOrientations/i,
+    /^Privacy/i, // Privacy - Camera Usage Description 등
+    /^ITSAppUsesNonExemptEncryption/i,
+    /^LSRequiresIPhoneOS/i,
+    /^UIFileSharingEnabled/i,
+    /^UISupportsDocumentBrowser/i,
+  ];
+  
+  // Localizable에 있을 수 있는 키 패턴 (제외)
+  const localizableKeyPatterns = [
+    /^NSLocalizedString/i,
+    /^LocalizedString/i,
+  ];
+  
+  // Info.plist 패턴에 매칭되는 키가 있고, Localizable 패턴에는 매칭되지 않는 경우
+  const hasInfoPlistKey = keys.some((key) => 
+    infoPlistKeyPatterns.some((pattern) => pattern.test(key))
+  );
+  
+  const hasLocalizableKey = keys.some((key) =>
+    localizableKeyPatterns.some((pattern) => pattern.test(key))
+  );
+  
+  // Info.plist 키가 있고 Localizable 키가 없으면 Info.plist로 판단
+  // 또는 CFBundle 키가 있으면 확실히 Info.plist
+  return hasInfoPlistKey && !hasLocalizableKey;
+}
+

@@ -20,6 +20,7 @@ import {
 export interface MergeResult {
   merged: Record<string, LanguageTranslation>;
   unused: Record<string, Record<string, string>>;
+  originalKeys: Set<string>;
 }
 
 /**
@@ -29,15 +30,16 @@ export interface MergeResult {
  * - 사용되지 않는 번역: 원본에 없는 키의 번역은 별도 보관
  */
 export function mergeXCStringsWithStorage(
-  xcstrings: XCStrings
+  xcstrings: XCStrings,
+  filename: string | null = null
 ): MergeResult {
   // 1. xcstrings에서 언어별 새 구성 생성 (매번 새롭게)
   const newTranslations = generateLanguageTranslations(xcstrings);
   
   // 2. 기존 localStorage 작업 데이터 가져오기
-  const existingOriginalWork = getOriginalWork();
-  const existingAdditionalWork = getAdditionalWork();
-  const existingUnused = getUnusedTranslations();
+  const existingOriginalWork = getOriginalWork(filename);
+  const existingAdditionalWork = getAdditionalWork(filename);
+  const existingUnused = getUnusedTranslations(filename);
   
   // 3. 원본 파일의 모든 키 수집
   const originalKeys = new Set(Object.keys(xcstrings.strings).filter((k) => k !== ""));
@@ -100,51 +102,94 @@ export function mergeXCStringsWithStorage(
   });
   
   // 6. 기존 추가 작업에 있지만 새 xcstrings에 없는 언어 처리
+  // 원본 파일이 기준이므로, 새 파일에 없는 언어는 제거하지 않지만
+  // 추가 번역도 원본 파일의 키만 유지해야 함
   Object.keys(existingAdditionalWork).forEach((locale) => {
     if (!merged[locale]) {
-      // 새 파일에 없는 언어는 추가 번역만 유지
+      // 새 파일에 없는 언어는 추가 번역만 유지하되, 원본 파일의 키만 필터링
       const existingOriginal = existingOriginalWork[locale];
       if (existingOriginal) {
+        // 원본 파일의 키만 필터링
+        const filteredAdditional: Record<string, string> = {};
+        Object.entries(existingAdditionalWork[locale]).forEach(([key, value]) => {
+          if (originalKeys.has(key) && !dontTranslateKeys.has(key)) {
+            filteredAdditional[key] = value;
+          } else {
+            // 원본에 없는 키는 unused로 이동
+            if (!unused[locale]) {
+              unused[locale] = {};
+            }
+            unused[locale][key] = value;
+          }
+        });
+        
         merged[locale] = {
           ...existingOriginal,
-          additionalTranslations: existingAdditionalWork[locale],
+          additionalTranslations: filteredAdditional,
         };
       }
     }
   });
   
   // 7. 사용되지 않는 번역 저장
-  setUnusedTranslations(unused);
+  setUnusedTranslations(unused, filename);
   
-  return { merged, unused };
+  return { merged, unused, originalKeys };
 }
 
 /**
  * 병합된 데이터를 localStorage에 저장 (원본과 추가 분리)
+ * 원본 파일의 키만 저장 (원본에 없는 키는 제거)
  */
-export function saveMergedData(result: MergeResult): void {
+export function saveMergedData(
+  result: MergeResult,
+  filename: string | null = null,
+  originalKeys?: Set<string>
+): void {
   // 원본과 추가를 분리해서 저장
   const originalWork: Record<string, LanguageTranslation> = {};
   const additionalWork: Record<string, Record<string, string>> = {};
   
   Object.entries(result.merged).forEach(([locale, translation]) => {
     // 원본 번역 저장 (번역이 없어도 언어는 저장)
+    // 원본 번역도 원본 파일의 키만 필터링
+    const filteredOriginalTranslations: Record<string, string> = {};
+    if (originalKeys) {
+      Object.entries(translation.originalTranslations || {}).forEach(([key, value]) => {
+        if (originalKeys.has(key)) {
+          filteredOriginalTranslations[key] = value;
+        }
+      });
+    } else {
+      // originalKeys가 제공되지 않으면 모든 원본 번역 포함 (하위 호환성)
+      Object.assign(filteredOriginalTranslations, translation.originalTranslations || {});
+    }
+    
     originalWork[locale] = {
       locale: translation.locale,
       sourceLanguage: translation.sourceLanguage,
       info: translation.info,
-      originalTranslations: translation.originalTranslations || {},
+      originalTranslations: filteredOriginalTranslations,
     };
     
-    // 추가 번역 저장
+    // 추가 번역 저장 (원본 파일의 키만)
     if (translation.additionalTranslations && Object.keys(translation.additionalTranslations).length > 0) {
-      additionalWork[locale] = translation.additionalTranslations;
+      const filteredAdditional: Record<string, string> = {};
+      Object.entries(translation.additionalTranslations).forEach(([key, value]) => {
+        if (!originalKeys || originalKeys.has(key)) {
+          filteredAdditional[key] = value;
+        }
+      });
+      
+      if (Object.keys(filteredAdditional).length > 0) {
+        additionalWork[locale] = filteredAdditional;
+      }
     }
   });
   
-  setOriginalWork(originalWork);
-  setAdditionalWork(additionalWork);
-  setUnusedTranslations(result.unused);
+  setOriginalWork(originalWork, filename);
+  setAdditionalWork(additionalWork, filename);
+  setUnusedTranslations(result.unused, filename);
 }
 
 /**

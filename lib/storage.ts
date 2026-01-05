@@ -6,12 +6,14 @@ import type { LanguageTranslation } from "@/types/xcstrings";
 import { idbGetItem, idbRemoveItem, idbSetItem } from "@/lib/indexeddb";
 
 const STORAGE_KEYS = {
-  ORIGINAL_WORK: "multilinq_original_work", // 원본 번역 (xcstrings 파일에서 읽어온 것)
-  ADDITIONAL_WORK: "multilinq_additional_work", // 추가 번역 (앱에서 생성한 것)
+  ORIGINAL_WORK: "multilinq_original_work", // 원본 번역 (xcstrings 파일에서 읽어온 것) - 하위 호환성
+  ADDITIONAL_WORK: "multilinq_additional_work", // 추가 번역 (앱에서 생성한 것) - 하위 호환성
   CURRENT_WORK: "multilinq_current_work", // 하위 호환성 (원본+추가 합산)
-  SELECTED_LANGUAGES: "multilinq_selected_languages",
-  UNUSED_TRANSLATIONS: "multilinq_unused_translations",
-  ORIGINAL_XCSTRINGS: "multilinq_original_xcstrings",
+  SELECTED_LANGUAGES: "multilinq_selected_languages", // 하위 호환성
+  UNUSED_TRANSLATIONS: "multilinq_unused_translations", // 하위 호환성
+  ORIGINAL_XCSTRINGS: "multilinq_original_xcstrings", // 하위 호환성
+  ORIGINAL_FILENAME: "multilinq_original_filename", // 하위 호환성
+  CURRENT_ACTIVE_FILENAME: "multilinq_current_active_filename", // 현재 활성 파일명
   OPENAI_SUPPORTED_LANGUAGES: "multilinq_openai_supported_languages", // OpenAI 지원 언어 목록
   CLAUDE_SUPPORTED_LANGUAGES: "multilinq_claude_supported_languages", // Claude 지원 언어 목록
   TRANSLATION_API_KEYS: "multilinq_translation_api_keys", // 번역 API 키들 (provider별)
@@ -33,15 +35,101 @@ function isQuotaExceededError(error: unknown): boolean {
 }
 
 /**
+ * 현재 활성 파일명 가져오기
+ */
+function getCurrentActiveFilename(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    return localStorage.getItem(STORAGE_KEYS.CURRENT_ACTIVE_FILENAME);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 현재 활성 파일명 설정
+ */
+function setCurrentActiveFilename(filename: string | null): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    if (filename) {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_ACTIVE_FILENAME, filename);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_ACTIVE_FILENAME);
+    }
+  } catch (error) {
+    console.error("현재 활성 파일명 저장 실패:", error);
+  }
+}
+
+/**
+ * 파일명을 안전한 스토리지 키로 변환
+ */
+function filenameToStorageKey(filename: string): string {
+  // 파일명을 기반으로 안전한 키 생성
+  // 특수문자를 언더스코어로 변환하고, 소문자로 변환
+  return filename
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .toLowerCase()
+    .replace(/\.xcstrings$/i, '');
+}
+
+/**
+ * 파일명에 따른 storage 키 가져오기
+ */
+function getStorageKeys(filename: string | null = null): {
+  ORIGINAL_WORK: string;
+  ADDITIONAL_WORK: string;
+  CURRENT_WORK: string;
+  SELECTED_LANGUAGES: string;
+  UNUSED_TRANSLATIONS: string;
+  ORIGINAL_XCSTRINGS: string;
+  ORIGINAL_FILENAME: string;
+} {
+  // 파일명이 제공되지 않으면 현재 활성 파일명 사용
+  const activeFilename = filename || getCurrentActiveFilename();
+  
+  if (!activeFilename) {
+    // 파일명이 없으면 기본 키 사용 (하위 호환성)
+    return {
+      ORIGINAL_WORK: STORAGE_KEYS.ORIGINAL_WORK,
+      ADDITIONAL_WORK: STORAGE_KEYS.ADDITIONAL_WORK,
+      CURRENT_WORK: STORAGE_KEYS.CURRENT_WORK,
+      SELECTED_LANGUAGES: STORAGE_KEYS.SELECTED_LANGUAGES,
+      UNUSED_TRANSLATIONS: STORAGE_KEYS.UNUSED_TRANSLATIONS,
+      ORIGINAL_XCSTRINGS: STORAGE_KEYS.ORIGINAL_XCSTRINGS,
+      ORIGINAL_FILENAME: STORAGE_KEYS.ORIGINAL_FILENAME,
+    };
+  }
+  
+  const fileKey = filenameToStorageKey(activeFilename);
+  
+  return {
+    ORIGINAL_WORK: `multilinq_original_work_${fileKey}`,
+    ADDITIONAL_WORK: `multilinq_additional_work_${fileKey}`,
+    CURRENT_WORK: `multilinq_current_work_${fileKey}`,
+    SELECTED_LANGUAGES: `multilinq_selected_languages_${fileKey}`,
+    UNUSED_TRANSLATIONS: `multilinq_unused_translations_${fileKey}`,
+    ORIGINAL_XCSTRINGS: `multilinq_original_xcstrings_${fileKey}`,
+    ORIGINAL_FILENAME: `multilinq_original_filename_${fileKey}`,
+  };
+}
+
+/**
  * 원본 번역 데이터 가져오기 (xcstrings 파일에서 읽어온 것)
  */
-export function getOriginalWork(): Record<string, LanguageTranslation> {
+export function getOriginalWork(filename: string | null = null): Record<string, LanguageTranslation> {
   if (typeof window === "undefined") {
     return {};
   }
   
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.ORIGINAL_WORK);
+    const keys = getStorageKeys(filename);
+    const data = localStorage.getItem(keys.ORIGINAL_WORK);
     return data ? JSON.parse(data) : {};
   } catch (error) {
     console.error("원본 번역 데이터 로드 실패:", error);
@@ -49,13 +137,14 @@ export function getOriginalWork(): Record<string, LanguageTranslation> {
   }
 }
 
-export function setOriginalWork(data: Record<string, LanguageTranslation>): void {
+export function setOriginalWork(data: Record<string, LanguageTranslation>, filename: string | null = null): void {
   if (typeof window === "undefined") {
     return;
   }
   
   try {
-    localStorage.setItem(STORAGE_KEYS.ORIGINAL_WORK, JSON.stringify(data));
+    const keys = getStorageKeys(filename);
+    localStorage.setItem(keys.ORIGINAL_WORK, JSON.stringify(data));
   } catch (error) {
     console.error("원본 번역 데이터 저장 실패:", error);
   }
@@ -64,13 +153,14 @@ export function setOriginalWork(data: Record<string, LanguageTranslation>): void
 /**
  * 추가 번역 데이터 가져오기 (앱에서 생성한 것)
  */
-export function getAdditionalWork(): Record<string, Record<string, string>> {
+export function getAdditionalWork(filename: string | null = null): Record<string, Record<string, string>> {
   if (typeof window === "undefined") {
     return {};
   }
   
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.ADDITIONAL_WORK);
+    const keys = getStorageKeys(filename);
+    const data = localStorage.getItem(keys.ADDITIONAL_WORK);
     return data ? JSON.parse(data) : {};
   } catch (error) {
     console.error("추가 번역 데이터 로드 실패:", error);
@@ -78,13 +168,14 @@ export function getAdditionalWork(): Record<string, Record<string, string>> {
   }
 }
 
-export function setAdditionalWork(data: Record<string, Record<string, string>>): void {
+export function setAdditionalWork(data: Record<string, Record<string, string>>, filename: string | null = null): void {
   if (typeof window === "undefined") {
     return;
   }
   
   try {
-    localStorage.setItem(STORAGE_KEYS.ADDITIONAL_WORK, JSON.stringify(data));
+    const keys = getStorageKeys(filename);
+    localStorage.setItem(keys.ADDITIONAL_WORK, JSON.stringify(data));
   } catch (error) {
     console.error("추가 번역 데이터 저장 실패:", error);
   }
@@ -93,10 +184,14 @@ export function setAdditionalWork(data: Record<string, Record<string, string>>):
 /**
  * 현재 작업 중인 번역 데이터 (원본 + 추가 합산, 하위 호환성)
  * 메모리에서만 합산하여 반환 (localStorage 읽기만 수행)
+ * 원본 파일의 키만 필터링하여 반환 (원본 파일이 기준)
  */
-export function getCurrentWork(): Record<string, LanguageTranslation> {
-  const originalWork = getOriginalWork();
-  const additionalWork = getAdditionalWork();
+export function getCurrentWork(
+  filename: string | null = null,
+  originalKeys?: Set<string>
+): Record<string, LanguageTranslation> {
+  const originalWork = getOriginalWork(filename);
+  const additionalWork = getAdditionalWork(filename);
   
   // 원본과 추가를 합산 (메모리에서만)
   const merged: Record<string, LanguageTranslation> = {};
@@ -111,10 +206,23 @@ export function getCurrentWork(): Record<string, LanguageTranslation> {
     const original = originalWork[locale];
     const additional = additionalWork[locale] || {};
     
+    // 원본 파일의 키만 필터링 (원본 파일이 기준)
+    let filteredAdditional: Record<string, string> = {};
+    if (originalKeys) {
+      Object.entries(additional).forEach(([key, value]) => {
+        if (originalKeys.has(key)) {
+          filteredAdditional[key] = value;
+        }
+      });
+    } else {
+      // 원본 키가 제공되지 않으면 모든 추가 번역 포함 (하위 호환성)
+      filteredAdditional = additional;
+    }
+    
     if (original) {
       merged[locale] = {
         ...original,
-        additionalTranslations: additional,
+        additionalTranslations: filteredAdditional,
       };
     } else {
       // 원본이 없으면 추가만 있는 경우
@@ -126,7 +234,7 @@ export function getCurrentWork(): Record<string, LanguageTranslation> {
           sourceText: "",
         },
         originalTranslations: {},
-        additionalTranslations: additional,
+        additionalTranslations: filteredAdditional,
       };
     }
   });
@@ -187,9 +295,10 @@ export function updateTranslationValue(
   value: string,
   sourceLanguage?: string,
   sourceText?: string,
-  comment?: string
+  comment?: string,
+  filename: string | null = null
 ): void {
-  const additionalWork = getAdditionalWork();
+  const additionalWork = getAdditionalWork(filename);
   
   if (!additionalWork[locale]) {
     additionalWork[locale] = {};
@@ -207,19 +316,20 @@ export function updateTranslationValue(
     }
   }
   
-  setAdditionalWork(additionalWork);
+  setAdditionalWork(additionalWork, filename);
 }
 
 /**
  * 선택된 언어 목록
  */
-export function getSelectedLanguages(): string[] {
+export function getSelectedLanguages(filename: string | null = null): string[] {
   if (typeof window === "undefined") {
     return [];
   }
   
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.SELECTED_LANGUAGES);
+    const keys = getStorageKeys(filename);
+    const data = localStorage.getItem(keys.SELECTED_LANGUAGES);
     return data ? JSON.parse(data) : [];
   } catch (error) {
     console.error("선택된 언어 목록 로드 실패:", error);
@@ -227,13 +337,14 @@ export function getSelectedLanguages(): string[] {
   }
 }
 
-export function setSelectedLanguages(locales: string[]): void {
+export function setSelectedLanguages(locales: string[], filename: string | null = null): void {
   if (typeof window === "undefined") {
     return;
   }
   
   try {
-    localStorage.setItem(STORAGE_KEYS.SELECTED_LANGUAGES, JSON.stringify(locales));
+    const keys = getStorageKeys(filename);
+    localStorage.setItem(keys.SELECTED_LANGUAGES, JSON.stringify(locales));
   } catch (error) {
     console.error("선택된 언어 목록 저장 실패:", error);
   }
@@ -242,13 +353,14 @@ export function setSelectedLanguages(locales: string[]): void {
 /**
  * 사용되지 않는 번역 (원본 파일에 없는 키의 번역)
  */
-export function getUnusedTranslations(): Record<string, Record<string, string>> {
+export function getUnusedTranslations(filename: string | null = null): Record<string, Record<string, string>> {
   if (typeof window === "undefined") {
     return {};
   }
   
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.UNUSED_TRANSLATIONS);
+    const keys = getStorageKeys(filename);
+    const data = localStorage.getItem(keys.UNUSED_TRANSLATIONS);
     return data ? JSON.parse(data) : {};
   } catch (error) {
     console.error("사용되지 않는 번역 로드 실패:", error);
@@ -257,14 +369,16 @@ export function getUnusedTranslations(): Record<string, Record<string, string>> 
 }
 
 export function setUnusedTranslations(
-  data: Record<string, Record<string, string>>
+  data: Record<string, Record<string, string>>,
+  filename: string | null = null
 ): void {
   if (typeof window === "undefined") {
     return;
   }
   
   try {
-    localStorage.setItem(STORAGE_KEYS.UNUSED_TRANSLATIONS, JSON.stringify(data));
+    const keys = getStorageKeys(filename);
+    localStorage.setItem(keys.UNUSED_TRANSLATIONS, JSON.stringify(data));
   } catch (error) {
     console.error("사용되지 않는 번역 저장 실패:", error);
   }
@@ -273,56 +387,91 @@ export function setUnusedTranslations(
 /**
  * 원본 xcstrings 파일 저장 (병합 시 사용)
  */
-export async function getOriginalXCStrings(): Promise<string | null> {
+export async function getOriginalXCStrings(filename: string | null = null): Promise<string | null> {
   if (typeof window === "undefined") {
     return null;
   }
   
+  const keys = getStorageKeys(filename);
+  
+  // IndexedDB만 사용 (중복 저장소 제거)
   try {
-    const fromLocal = localStorage.getItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
-    if (fromLocal) {
-      return fromLocal;
-    }
-  } catch (error) {
-    console.error("원본 xcstrings 로드 실패:", error);
-  }
-
-  try {
-    return await idbGetItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
+    return await idbGetItem(keys.ORIGINAL_XCSTRINGS);
   } catch (error) {
     console.error("원본 xcstrings(IndexedDB) 로드 실패:", error);
     return null;
   }
 }
 
-export async function setOriginalXCStrings(content: string): Promise<void> {
+export async function setOriginalXCStrings(content: string, filename: string | null = null): Promise<void> {
   if (typeof window === "undefined") {
     return;
   }
   
-  try {
-    localStorage.setItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS, content);
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      // localStorage 용량 초과 시 IndexedDB로 폴백
-      try {
-        // localStorage에 남아있을 수 있는 기존 값을 제거 (일관성 유지)
-        localStorage.removeItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
-      } catch {
-        // ignore
-      }
-
-      try {
-        await idbSetItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS, content);
-        console.warn("원본 xcstrings가 커서 IndexedDB에 저장했습니다.");
-        return;
-      } catch (idbError) {
-        console.error("원본 xcstrings(IndexedDB) 저장 실패:", idbError);
-      }
-    }
-
-    console.error("원본 xcstrings 저장 실패:", error);
+  if (!filename) {
+    throw new Error("파일명이 필요합니다.");
   }
+  
+  // 현재 활성 파일명 설정
+  setCurrentActiveFilename(filename);
+  
+  const keys = getStorageKeys(filename);
+  
+  // IndexedDB만 사용 (중복 저장소 제거)
+  try {
+    await idbSetItem(keys.ORIGINAL_XCSTRINGS, content);
+    console.log(`원본 xcstrings 저장 완료 (IndexedDB): ${keys.ORIGINAL_XCSTRINGS}, 파일명: ${filename}`);
+    
+    // 저장 확인 (디버깅용)
+    const saved = await idbGetItem(keys.ORIGINAL_XCSTRINGS);
+    if (!saved) {
+      console.warn("원본 xcstrings 저장 후 확인 실패: 저장된 데이터를 찾을 수 없습니다.");
+    } else {
+      console.log(`원본 xcstrings 저장 확인 완료: ${saved.length} bytes`);
+    }
+    
+    // 파일명 저장 (localStorage에 저장 - 작은 데이터이므로)
+    try {
+      localStorage.setItem(keys.ORIGINAL_FILENAME, filename);
+      console.log(`원본 파일명 저장 완료: ${filename}`);
+    } catch (error) {
+      console.error("원본 파일명 저장 실패:", error);
+    }
+    
+    // 기존 localStorage에 남아있을 수 있는 중복 데이터 제거
+    try {
+      localStorage.removeItem(keys.ORIGINAL_XCSTRINGS);
+    } catch {
+      // ignore
+    }
+  } catch (idbError) {
+    console.error("원본 xcstrings(IndexedDB) 저장 실패:", idbError);
+    throw idbError;
+  }
+}
+
+/**
+ * 원본 파일명 가져오기
+ */
+export function getOriginalFilename(filename: string | null = null): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  
+  try {
+    const keys = getStorageKeys(filename);
+    return localStorage.getItem(keys.ORIGINAL_FILENAME);
+  } catch (error) {
+    console.error("원본 파일명 로드 실패:", error);
+    return null;
+  }
+}
+
+/**
+ * 현재 활성 파일명 가져오기 (외부에서 사용)
+ */
+export function getCurrentActiveFilenamePublic(): string | null {
+  return getCurrentActiveFilename();
 }
 
 /**
@@ -352,8 +501,8 @@ export function getMergedTranslations(translation: LanguageTranslation): Record<
 /**
  * 추가 번역 삭제
  */
-export function deleteAdditionalTranslation(locale: string, key: string): void {
-  const additionalWork = getAdditionalWork();
+export function deleteAdditionalTranslation(locale: string, key: string, filename: string | null = null): void {
+  const additionalWork = getAdditionalWork(filename);
   
   if (!additionalWork[locale]) {
     return;
@@ -366,14 +515,14 @@ export function deleteAdditionalTranslation(locale: string, key: string): void {
     delete additionalWork[locale];
   }
   
-  setAdditionalWork(additionalWork);
+  setAdditionalWork(additionalWork, filename);
 }
 
 /**
  * 원본 xcstrings 파일에서 특정 언어의 번역 제거
  */
-async function removeTranslationFromOriginalXCStrings(locale: string, key: string): Promise<void> {
-  const originalContent = await getOriginalXCStrings();
+async function removeTranslationFromOriginalXCStrings(locale: string, key: string, filename: string | null = null): Promise<void> {
+  const originalContent = await getOriginalXCStrings(filename);
   if (!originalContent) {
     return;
   }
@@ -397,7 +546,7 @@ async function removeTranslationFromOriginalXCStrings(locale: string, key: strin
       
       // 업데이트된 xcstrings를 다시 저장
       const updatedContent = JSON.stringify(xcstrings, null, 2);
-      await setOriginalXCStrings(updatedContent);
+      await setOriginalXCStrings(updatedContent, filename);
     }
   } catch (error) {
     console.error("원본 xcstrings 파일에서 번역 제거 실패:", error);
@@ -407,8 +556,8 @@ async function removeTranslationFromOriginalXCStrings(locale: string, key: strin
 /**
  * 원본 번역 삭제
  */
-export async function deleteOriginalTranslation(locale: string, key: string): Promise<void> {
-  const originalWork = getOriginalWork();
+export async function deleteOriginalTranslation(locale: string, key: string, filename: string | null = null): Promise<void> {
+  const originalWork = getOriginalWork(filename);
   
   if (!originalWork[locale]) {
     return;
@@ -426,11 +575,11 @@ export async function deleteOriginalTranslation(locale: string, key: string): Pr
     originalWork[locale].originalTranslations = {};
   }
   
-  setOriginalWork(originalWork);
+  setOriginalWork(originalWork, filename);
   
   // 저장된 원본 xcstrings 파일에서도 제거
   // 원본 파일에서 제거하면 병합 로직이 실행될 때 자동으로 제외됨
-  await removeTranslationFromOriginalXCStrings(locale, key);
+  await removeTranslationFromOriginalXCStrings(locale, key, filename);
 }
 
 /**
@@ -447,12 +596,31 @@ export function clearAllWork(): void {
     localStorage.removeItem(STORAGE_KEYS.CURRENT_WORK);
     localStorage.removeItem(STORAGE_KEYS.SELECTED_LANGUAGES);
     localStorage.removeItem(STORAGE_KEYS.UNUSED_TRANSLATIONS);
+    // ORIGINAL_XCSTRINGS는 IndexedDB만 사용하므로 localStorage에서 제거 (중복 제거)
     localStorage.removeItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_ACTIVE_FILENAME);
+    
+    // 모든 파일명 기반 키 제거 (localStorage에서 multilinq_로 시작하는 모든 키 찾아서 제거)
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("multilinq_")) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // ignore
+      }
+    });
   } catch (error) {
     console.error("작업 데이터 초기화 실패:", error);
   }
 
-  // IndexedDB 폴백 저장소도 함께 정리 (fire-and-forget)
+  // IndexedDB 저장소도 함께 정리 (fire-and-forget)
+  // 모든 파일명 기반 키 제거는 복잡하므로 주요 키만 정리
   void idbRemoveItem(STORAGE_KEYS.ORIGINAL_XCSTRINGS).catch((error) => {
     console.error("작업 데이터(IndexedDB) 초기화 실패:", error);
   });

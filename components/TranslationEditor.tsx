@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { getCurrentWork, updateTranslationValue, getMergedTranslations, deleteAdditionalTranslation, deleteOriginalTranslation, getSelectedLanguages, setSelectedLanguages } from "@/lib/storage";
 import { getSourceInfo, getStringValue, getTranslatableKeys } from "@/lib/xcstrings-parser";
+import { getCurrentActiveFilenamePublic } from "@/lib/storage";
 import { calculateTranslationStatus } from "@/lib/merge-utils";
 import type { XCStrings } from "@/types/xcstrings";
 
@@ -40,9 +41,11 @@ export default function TranslationEditor({
       return;
     }
 
-    const work = getCurrentWork();
-    const translation = work[locale];
+    const filename = getCurrentActiveFilenamePublic();
     const sourceKeys = getTranslatableKeys(xcstrings);
+    const originalKeys = new Set(sourceKeys);
+    const work = getCurrentWork(filename, originalKeys);
+    const translation = work[locale];
 
     // 병합된 번역 가져오기
     const mergedTranslations = translation ? getMergedTranslations(translation) : {};
@@ -110,9 +113,10 @@ export default function TranslationEditor({
   }, [xcstrings, locale, searchQuery, filter]);
 
   const handleValueChange = (key: string, value: string) => {
-    if (!locale) return;
+    if (!locale || !xcstrings) return;
 
-    updateTranslationValue(locale, key, value);
+    const filename = getCurrentActiveFilenamePublic();
+    updateTranslationValue(locale, key, value, undefined, undefined, undefined, filename);
     onTranslationUpdate?.();
 
     // 로컬 상태 업데이트
@@ -166,25 +170,29 @@ export default function TranslationEditor({
         // 다음 틱에서 실행하여 UI가 업데이트될 시간을 줌
         setTimeout(() => {
           void (async () => {
+            if (!xcstrings) return;
+            const filename = getCurrentActiveFilenamePublic();
+            
             if (filter === "translated") {
               // 번역 필터: 추가 번역만 삭제 (원본은 유지)
               keysToDelete.forEach((key) => {
-                deleteAdditionalTranslation(locale, key);
+                deleteAdditionalTranslation(locale, key, filename);
               });
             } else if (filter === "original") {
               // 원본 필터: 원본 번역 삭제 (원본 xcstrings는 IndexedDB를 사용할 수 있어 async)
-              await Promise.all(keysToDelete.map((key) => deleteOriginalTranslation(locale, key)));
+              await Promise.all(keysToDelete.map((key) => deleteOriginalTranslation(locale, key, filename)));
             } else if (filter === "additional") {
               // 추가본 필터: 추가 번역 삭제
               keysToDelete.forEach((key) => {
-                deleteAdditionalTranslation(locale, key);
+                deleteAdditionalTranslation(locale, key, filename);
               });
             }
 
             // 삭제 후 번역 상태 확인
-            const work = getCurrentWork();
+            const sourceKeys = getTranslatableKeys(xcstrings);
+            const originalKeys = new Set(sourceKeys);
+            const work = getCurrentWork(filename, originalKeys);
             const translation = work[locale];
-          const sourceKeys = getTranslatableKeys(xcstrings);
             
             if (translation) {
               const status = calculateTranslationStatus(translation, sourceKeys);

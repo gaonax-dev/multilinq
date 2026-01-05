@@ -3,7 +3,6 @@
 import { useState } from "react";
 import FileUpload from "./FileUpload";
 import LanguageList from "./LanguageList";
-import LanguageSettingsModal from "./LanguageSettingsModal";
 import { getCurrentWork, getSelectedLanguages, getOriginalXCStrings, getUnusedTranslations, setOriginalXCStrings } from "@/lib/storage";
 import { mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { parseXCStrings } from "@/lib/xcstrings-parser";
@@ -13,7 +12,7 @@ import type { TranslationProvider } from "@/types/translation";
 interface SidebarProps {
   xcstrings: XCStrings | null;
   selectedLocale: string | null;
-  onXCStringsLoad: (xcstrings: XCStrings) => void;
+  onXCStringsLoad: (xcstrings: XCStrings, filename: string | null) => void;
   onLocaleSelect: (locale: string) => void;
   onTranslateAll: () => void;
   onTranslateSelected?: () => void;
@@ -44,7 +43,6 @@ export default function Sidebar({
   const [isLoading, setIsLoading] = useState(false);
   const [internalProvider, setInternalProvider] = useState<TranslationProvider>("google-translator");
   const [internalApiKey, setInternalApiKey] = useState("");
-  const [isLanguageSettingsOpen, setIsLanguageSettingsOpen] = useState(false);
   
   const translationProvider = externalProvider ?? internalProvider;
   const apiKey = externalApiKey ?? internalApiKey;
@@ -71,14 +69,14 @@ export default function Sidebar({
       const content = await file.text();
       const parsed = parseXCStrings(content);
       
-      // 원본 파일 저장
-      await setOriginalXCStrings(content);
+      // 원본 파일 저장 (파일명 기반)
+      await setOriginalXCStrings(content, file.name);
       
-      // 병합 로직 실행
-      const result = mergeXCStringsWithStorage(parsed);
-      saveMergedData(result);
+      // 병합 로직 실행 (파일명 기반)
+      const result = mergeXCStringsWithStorage(parsed, file.name);
+      saveMergedData(result, file.name, result.originalKeys);
       
-      onXCStringsLoad(parsed);
+      onXCStringsLoad(parsed, file.name);
     } catch (error) {
       console.error("파일 로드 실패:", error);
       alert(`파일 로드 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
@@ -163,15 +161,6 @@ export default function Sidebar({
             <div className="border-t border-gray-200 pt-4">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-sm font-semibold text-gray-700">언어 목록</h2>
-                {(translationProvider === "openai" || translationProvider === "claude") && (
-                  <button
-                    onClick={() => setIsLanguageSettingsOpen(true)}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                    title={`${translationProvider === "openai" ? "OpenAI" : "Claude"} 지원 언어 설정`}
-                  >
-                    설정
-                  </button>
-                )}
               </div>
               <LanguageList
                 xcstrings={xcstrings}
@@ -219,12 +208,6 @@ export default function Sidebar({
           </>
         )}
       </div>
-      
-      <LanguageSettingsModal
-        isOpen={isLanguageSettingsOpen}
-        onClose={() => setIsLanguageSettingsOpen(false)}
-        provider={translationProvider}
-      />
     </div>
   );
 }
