@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { TARGET_LANGUAGES } from "@/lib/language-utils";
+import { TARGET_LANGUAGES, isGoogleTranslatorUnsupported } from "@/lib/language-utils";
 import { getCurrentWork, getSelectedLanguages, setSelectedLanguages } from "@/lib/storage";
 import { calculateTranslationStatus } from "@/lib/merge-utils";
 import { getTranslatableKeys } from "@/lib/xcstrings-parser";
@@ -134,7 +134,11 @@ export default function LanguageList({
     setSelectedLanguages(newSelected, filename);
   };
 
-  const getStatusEmoji = (status: LanguageInfo["status"]) => {
+  const getStatusEmoji = (status: LanguageInfo["status"], locale: string) => {
+    // Google Translator에서 확장자 에러가 발생하는 언어인 경우 노란색 경고 표시
+    if (translationProvider === "google-translator" && isGoogleTranslatorUnsupported(locale)) {
+      return "⚠️";
+    }
     if (status.pending > 0) return "🟡";
     if (status.percentage === 0) return "🔴";
     if (status.percentage >= 100) return "🟢";
@@ -182,9 +186,12 @@ export default function LanguageList({
             />
             
             <span className="flex-1 text-sm">
-              <span className="mr-2">{getStatusEmoji(lang.status)}</span>
+              <span className="mr-2">{getStatusEmoji(lang.status, lang.locale)}</span>
               <span className="font-medium text-gray-900">{lang.name}</span>
               <span className="ml-2 text-gray-600">({lang.locale})</span>
+              {translationProvider === "google-translator" && isGoogleTranslatorUnsupported(lang.locale) && (
+                <span className="ml-2 text-xs text-yellow-600 font-medium">(Google 번역 미지원)</span>
+              )}
             </span>
             
             <span className={`text-xs font-medium ${getStatusColor(lang.status)}`}>

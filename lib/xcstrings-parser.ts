@@ -122,6 +122,15 @@ export function generateLanguageTranslations(
       
       // 해당 언어의 번역값
       const translatedValue = getStringValue(entry, locale);
+      const localization = entry.localizations?.[locale];
+      const state = localization?.stringUnit?.state;
+      
+      // "needs_review" 상태인 경우 번역값이 있어도 번역 대상으로 처리 (재번역 필요)
+      if (state === "needs_review") {
+        // needs_review 상태는 번역값이 있어도 originalTranslations에 포함하지 않음
+        // (재번역이 필요하므로 pending으로 처리)
+        return;
+      }
       
       if (translatedValue) {
         translations[key] = translatedValue;
@@ -141,6 +150,18 @@ export function generateLanguageTranslations(
   });
   
   return result;
+}
+
+/**
+ * 특정 키의 특정 언어에서 "needs_review" 상태인지 확인
+ */
+export function isNeedsReview(xcstrings: XCStrings, key: string, locale: string): boolean {
+  const entry = xcstrings.strings[key];
+  if (!entry?.localizations?.[locale]) {
+    return false;
+  }
+  const state = entry.localizations[locale].stringUnit?.state;
+  return state === "needs_review";
 }
 
 /**
@@ -212,4 +233,3 @@ export function isInfoPlistFile(xcstrings: XCStrings): boolean {
   // 또는 CFBundle 키가 있으면 확실히 Info.plist
   return hasInfoPlistKey && !hasLocalizableKey;
 }
-

@@ -86,16 +86,62 @@ export const TARGET_LANGUAGES: LanguageOption[] = [
 
 /**
  * 번역 API에서 사용하는 언어 코드 매핑
+ * Google Translator에서 확장자 에러가 발생하는 언어들을 변환
  */
 export const TRANSLATION_LOCALE_OVERRIDES: Record<string, string> = {
   "nb": "no", // Norwegian Bokmål
+  // Google Translator에서 하이픈 포함 언어 코드 처리
+  "zh-Hans": "zh-CN", // Chinese (Simplified)
+  "zh-Hant": "zh-TW", // Chinese (Traditional)
+  "zh-HK": "zh", // Chinese (Hong Kong) - 기본 중국어로 변환
+  "en-GB": "en", // English (UK)
+  "en-AU": "en", // English (AU)
+  "en-IN": "en", // English (India)
+  "en-CA": "en", // English (Canada)
+  "es-US": "es", // Spanish (US)
+  "es-419": "es", // Spanish (Latin America)
+  "es-MX": "es", // Spanish (Mexico)
+  "pt-BR": "pt", // Portuguese (Brazil)
+  "pt-PT": "pt", // Portuguese (Portugal)
+  "fr-CA": "fr", // French (Canada)
+  "fil": "tl", // Filipino -> Tagalog
+  "he": "iw", // Hebrew (구형 코드)
+  "or": "or", // Odia (그대로 유지)
 };
+
+/**
+ * Google Translator에서 확장자 에러가 발생하는 언어 목록
+ */
+export const GOOGLE_TRANSLATOR_UNSUPPORTED_LOCALES = new Set([
+  "zh-Hans",
+  "zh-Hant",
+  "zh-HK",
+  "en-GB",
+  "en-AU",
+  "en-IN",
+  "en-CA",
+  "es-US",
+  "es-419",
+  "es-MX",
+  "pt-BR",
+  "pt-PT",
+  "fr-CA",
+  "fil",
+  "he",
+]);
 
 /**
  * 언어 코드를 번역 API에 맞게 변환
  */
 export function getTranslationLocale(locale: string): string {
   return TRANSLATION_LOCALE_OVERRIDES[locale] || locale;
+}
+
+/**
+ * Google Translator에서 지원하지 않는 언어인지 확인
+ */
+export function isGoogleTranslatorUnsupported(locale: string): boolean {
+  return GOOGLE_TRANSLATOR_UNSUPPORTED_LOCALES.has(locale);
 }
 
 /**

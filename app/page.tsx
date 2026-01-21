@@ -8,7 +8,7 @@ import BatchTranslationProgress from "@/components/BatchTranslationProgress";
 import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getMergedTranslations, getTranslationApiKey, setTranslationApiKey, getTranslationProvider, setTranslationProvider as saveTranslationProvider, getAdditionalWork, getOriginalFilename, getCurrentActiveFilenamePublic } from "@/lib/storage";
 import { calculateTranslationStatus, mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { findNameByLocale } from "@/lib/language-utils";
-import { getSourceInfo, getTranslatableKeys, parseXCStrings } from "@/lib/xcstrings-parser";
+import { getSourceInfo, getTranslatableKeys, parseXCStrings, isNeedsReview } from "@/lib/xcstrings-parser";
 import { requestWakeLock, releaseWakeLock } from "@/lib/wake-lock";
 import type { XCStrings } from "@/types/xcstrings";
 import type { TranslationStatus, TranslationProvider } from "@/types/translation";
@@ -188,6 +188,11 @@ export default function Home() {
     }
     
     const missingTranslatedKeys = sourceKeys.filter((key) => {
+      // "needs review" 상태인 경우 항상 재번역 대상
+      if (isNeedsReview(xcstrings, key, locale)) {
+        return true;
+      }
+      
       // 원본 번역 확인
       const originalValue = originalTranslations[key];
       const hasOriginal = originalValue && typeof originalValue === "string" && originalValue.trim().length > 0;
@@ -420,6 +425,10 @@ export default function Home() {
       const originalTranslations = translation.originalTranslations || {};
       const additionalTranslations = translation.additionalTranslations || {};
       const missingCount = sourceKeys.filter((key) => {
+        // "needs review" 상태인 경우 항상 재번역 대상
+        if (isNeedsReview(xcstrings, key, locale)) {
+          return true;
+        }
         const originalValue = originalTranslations[key];
         const hasOriginal = originalValue && typeof originalValue === "string" && originalValue.trim().length > 0;
         const additionalValue = additionalTranslations[key];
@@ -552,6 +561,10 @@ export default function Home() {
       const originalTranslations = translation.originalTranslations || {};
       const additionalTranslations = translation.additionalTranslations || {};
       const missingCount = sourceKeys.filter((key) => {
+        // "needs review" 상태인 경우 항상 재번역 대상
+        if (isNeedsReview(xcstrings, key, locale)) {
+          return true;
+        }
         const originalValue = originalTranslations[key];
         const hasOriginal = originalValue && typeof originalValue === "string" && originalValue.trim().length > 0;
         const additionalValue = additionalTranslations[key];

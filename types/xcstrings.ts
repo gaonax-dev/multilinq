@@ -3,7 +3,7 @@
  */
 
 export interface StringUnit {
-  state: "translated" | "new" | "stale";
+  state: "translated" | "new" | "stale" | "needs_review";
   value: string;
 }
 
