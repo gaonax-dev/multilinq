@@ -249,7 +249,13 @@ export default function Home() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            texts: texts.map((t) => ({ key: t.key, text: t.text })),
+            texts: texts.map((t) => {
+              const item: { key: string; text: string; comment?: string } = { key: t.key, text: t.text };
+              if (t.comment !== undefined && t.comment !== null) {
+                item.comment = t.comment;
+              }
+              return item;
+            }),
             sourceLanguage: xcstrings.sourceLanguage,
             targetLanguage: locale,
             provider: translationProvider,
@@ -958,7 +964,13 @@ export default function Home() {
                                     "Content-Type": "application/json",
                                   },
                                   body: JSON.stringify({
-                                    texts: texts.map((t) => ({ key: t.key, text: t.text })),
+                                    texts: texts.map((t) => {
+                                      const item: { key: string; text: string; comment?: string } = { key: t.key, text: t.text };
+                                      if (t.comment !== undefined && t.comment !== null) {
+                                        item.comment = t.comment;
+                                      }
+                                      return item;
+                                    }),
                                     sourceLanguage: xcstrings.sourceLanguage,
                                     targetLanguage: selectedLocale,
                                     provider: translationProvider,

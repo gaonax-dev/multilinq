@@ -111,6 +111,27 @@ async function translateWithDeepL(
 }
 
 /**
+ * 음가 결과 후처리 (괄호 제거, 원문과 동일 여부 확인)
+ */
+function postProcessPhoneticResult(result: string, originalText: string, sourceLanguage: string, targetLanguage: string): string {
+  // 괄호 제거
+  let processed = result.replace(/[()]/g, "").trim();
+  
+  // 타겟 언어와 원문이 다른 경우에만 원문과 동일 여부 확인
+  if (sourceLanguage !== targetLanguage) {
+    // 원문과 동일하면 경고 (플레이스홀더 제외하고 비교)
+    const originalWithoutPlaceholders = originalText.replace(/%\d*\$?[@\w]+/g, "").replace(/[()]/g, "").trim();
+    const processedWithoutPlaceholders = processed.replace(/%\d*\$?[@\w]+/g, "").trim();
+    
+    if (originalWithoutPlaceholders && processedWithoutPlaceholders === originalWithoutPlaceholders) {
+      console.warn(`[음가 변환] 원문과 동일한 결과 반환됨: "${originalText}" → "${processed}"`);
+    }
+  }
+  
+  return processed;
+}
+
+/**
  * OpenAI GPT 번역
  */
 async function translateWithOpenAI(
@@ -128,7 +149,13 @@ async function translateWithOpenAI(
   const { default: OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey });
   
-  const prompt = buildAITranslationPrompt(text, targetLanguage, comment);
+  const isPhoneticMode = comment && comment.includes("[PHONETIC]");
+  const prompt = buildAITranslationPrompt(text, sourceLanguage, targetLanguage, comment);
+  
+  // system message 설정 (음가 생성 모드와 일반 번역 모드 구분)
+  const systemMessage = isPhoneticMode
+    ? "You are a phonetic transcription specialist. Output ONLY the phonetic notation with no explanations, no introductory phrases, and no additional text. Never write 'the pronunciation is' or similar phrases. Just the notation itself."
+    : "You are a professional translator specializing in iOS app localization.";
   
   // gpt-5.1 또는 gpt-3.5-turbo 사용 (gpt-4는 일부 계정에서 접근 불가)
   try {
@@ -138,7 +165,7 @@ async function translateWithOpenAI(
       messages: [
         {
           role: "system",
-          content: "You are a professional translator specializing in iOS app localization.",
+          content: systemMessage,
         },
         {
           role: "user",
@@ -148,7 +175,8 @@ async function translateWithOpenAI(
       temperature: 0.3,
     });
     
-    return completion.choices[0]?.message?.content || text;
+    const result = completion.choices[0]?.message?.content || text;
+    return isPhoneticMode ? postProcessPhoneticResult(result, text, sourceLanguage, targetLanguage) : result;
   } catch (error: any) {
     // gpt-4-turbo가 실패하면 gpt-3.5-turbo로 재시도
     if (error?.status === 404 || error?.message?.includes("does not exist")) {
@@ -158,7 +186,7 @@ async function translateWithOpenAI(
         messages: [
           {
             role: "system",
-            content: "You are a professional translator specializing in iOS app localization.",
+            content: systemMessage,
           },
           {
             role: "user",
@@ -168,7 +196,8 @@ async function translateWithOpenAI(
         temperature: 0.3,
       });
       
-      return completion.choices[0]?.message?.content || text;
+      const result = completion.choices[0]?.message?.content || text;
+      return isPhoneticMode ? postProcessPhoneticResult(result, text, sourceLanguage, targetLanguage) : result;
     }
     throw error;
   }
@@ -191,7 +220,13 @@ async function translateWithClaude(
   const Anthropic = await import("@anthropic-ai/sdk");
   const anthropic = new Anthropic.Anthropic({ apiKey });
   
-  const prompt = buildAITranslationPrompt(text, targetLanguage, comment);
+  const isPhoneticMode = comment && comment.includes("[PHONETIC]");
+  const prompt = buildAITranslationPrompt(text, sourceLanguage, targetLanguage, comment);
+  
+  // Claude는 system message를 별도로 지원하므로 프롬프트에 포함
+  const fullPrompt = isPhoneticMode
+    ? "You are a phonetic transcription specialist. Your task is to provide phonetic pronunciation of text, NOT translation.\n\n" + prompt
+    : prompt;
   
   const message = await anthropic.messages.create({
     model: "claude-3-5-sonnet-20241022",
@@ -199,23 +234,97 @@ async function translateWithClaude(
     messages: [
       {
         role: "user",
-        content: prompt,
+        content: fullPrompt,
       },
     ],
   });
   
   const content = message.content[0];
   if (content.type === "text") {
-    return content.text;
+    const result = content.text;
+    return isPhoneticMode ? postProcessPhoneticResult(result, text, sourceLanguage, targetLanguage) : result;
   }
   
   return text;
 }
 
 /**
+ * 언어별 음가 변환 추가 규칙 (해당 언어 타겟일 때만 적용)
+ */
+function getPhoneticRulesForLanguage(targetLanguage: string): string {
+  switch (targetLanguage) {
+    // 동아시아
+    case "ja":
+      return "- Use Hiragana (ひらがな) and/or Katakana (カタカナ) only.";
+    case "ko":
+      return "- Use Revised Romanization of Korean (국어의 로마자 표기법) only.";
+    case "zh-Hans":
+      return "- Use Hanyu Pinyin (汉语拼音, pinyin) only.";
+    case "zh-Hant":
+      return "- Use Zhuyin (注音符号, Bopomofo) only.";
+    case "zh-HK":
+      return "- Use Yale romanization for Cantonese only.";
+
+    // 중동·아프리카
+    case "ar":
+      return "- Use romanization/transliteration (Latin script) only.";
+    case "iw":
+      return "- Use Hebrew romanization (Latin script) only.";
+
+    // 인도·남아시아
+    case "hi":
+    case "bn":
+    case "ta":
+    case "te":
+    case "kn":
+    case "ml":
+    case "mr":
+    case "pa":
+    case "ur":
+    case "ne":
+    case "si":
+      return "- Use ISO 15919 or standard Latin transliteration only.";
+
+    // 동남아시아
+    case "th":
+      return "- Use RTGS (Royal Thai General System of Transcription) only.";
+    case "vi":
+      return "- Use Vietnamese orthography (Quốc ngữ) only.";
+    case "km":
+      return "- Use Khmer romanization (UNGEGN or ALA-LC) only.";
+    case "lo":
+      return "- Use Lao romanization only.";
+    case "my":
+      return "- Use Burmese romanization (MLCTS) only.";
+    case "id":
+      return "- Use Indonesian orthography (Latin) only.";
+    case "ms":
+      return "- Use Malay orthography (Latin) only.";
+    case "fil":
+      return "- Use Filipino orthography (Latin) only.";
+
+    // 유럽 (비라틴 문자)
+    case "el":
+      return "- Use Greek romanization (ISO 843 or UN) only.";
+    case "uk":
+    case "be":
+    case "bg":
+    case "kk":
+      return "- Use Cyrillic-to-Latin romanization (ISO 9 style) only.";
+    case "ka":
+      return "- Use Georgian romanization (ISO 9984 or national) only.";
+    case "hy":
+      return "- Use Armenian romanization (ISO 9985 or traditional) only.";
+
+    default:
+      return "";
+  }
+}
+
+/**
  * AI 번역 프롬프트 생성 (레퍼런스 코드 기반)
  */
-function buildAITranslationPrompt(text: string, targetLanguage: string, comment?: string): string {
+function buildAITranslationPrompt(text: string, sourceLanguage: string, targetLanguage: string, comment?: string): string {
   const languageNames: Record<string, string> = {
     "en-GB": "English (UK)",
     "en-AU": "English (AU)",
@@ -231,16 +340,40 @@ function buildAITranslationPrompt(text: string, targetLanguage: string, comment?
     "zh-Hans": "Chinese (Simplified)",
     "zh-Hant": "Chinese (Traditional)",
     "zh-HK": "Chinese (Hong Kong)",
+    "ar": "Arabic",
     // ... 더 많은 언어 추가 가능
   };
   
   const langName = languageNames[targetLanguage] || targetLanguage;
+  const sourceLangName = languageNames[sourceLanguage] || sourceLanguage;
+  
+  // comment에 [PHONETIC]이 포함되어 있으면 음가 생성 모드
+  const isPhoneticMode = comment && comment.includes("[PHONETIC]");
   
   // 텍스트에서 플레이스홀더 찾기
   const placeholderPattern = /%\d*\$?[@\w]+/g;
   const placeholders = text.match(placeholderPattern) || [];
   
-  let prompt = `Translate the following English text to ${langName} (${targetLanguage}).
+  let prompt: string;
+  
+  if (isPhoneticMode) {
+    const textWithoutParentheses = text.replace(/[()]/g, "").replace(/\n/g, " ");
+    const langSpecificRules = getPhoneticRulesForLanguage(targetLanguage).trim();
+    
+    prompt = `CRITICAL RULES:
+  1. Output ONLY the phonetic notation/pronunciation itself
+  2. NO explanations, NO descriptions, NO additional text
+  3. NO phrases like "the pronunciation is...", "it sounds like...", etc.
+  4. NO parentheses, NO quotation marks around the output
+  5. Use ${langName} (${targetLanguage}) script/notation only
+  ${langSpecificRules ? `6. ${langSpecificRules}` : ''}
+  
+  Text: ${textWithoutParentheses}
+  
+  Output (phonetic notation only):`;
+  } else {
+    // 일반 번역 모드
+    prompt = `Translate the following English text to ${langName} (${targetLanguage}).
 
 CRITICAL TRANSLATION RULES:
 1. DO NOT translate placeholders - Keep them EXACTLY as they appear in the original
@@ -251,12 +384,13 @@ CRITICAL TRANSLATION RULES:
 6. Use the sequence: \`xcodebuild -exportLocalizations\` → machine translation → \`xcodebuild -importLocalizations\`
 7. Maintain the exact format and structure of placeholders`;
 
-  // comment가 있으면 컨텍스트로 추가
-  if (comment && comment.trim()) {
-    prompt += `\n\nContext/Note: ${comment}`;
-  }
+    // comment가 있으면 컨텍스트로 추가
+    if (comment && comment.trim()) {
+      prompt += `\n\nContext/Note: ${comment}`;
+    }
 
-  prompt += `\n\nText to translate:\n\n${text}\n\nProvide only the translation without any additional text or labels.`;
+    prompt += `\n\nText to translate:\n\n${text}\n\nProvide only the translation without any additional text or labels.`;
+  }
 
   return prompt;
 }

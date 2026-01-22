@@ -64,7 +64,7 @@ export async function PUT(request: NextRequest) {
       apiKey,
       options,
     } = body as {
-      texts: Array<{ key: string; text: string }>;
+      texts: Array<{ key: string; text: string; comment?: string }>;
       sourceLanguage: string;
       targetLanguage: string;
       provider: TranslationRequest["provider"];
@@ -96,6 +96,7 @@ export async function PUT(request: NextRequest) {
               targetLanguage,
               provider,
               apiKey,
+              comment: item.comment,
               options,
             });
             
