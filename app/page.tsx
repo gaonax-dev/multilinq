@@ -8,7 +8,7 @@ import BatchTranslationProgress from "@/components/BatchTranslationProgress";
 import { getCurrentWork, getOriginalXCStrings, getSelectedLanguages, updateTranslationValue, getMergedTranslations, getTranslationApiKey, setTranslationApiKey, getTranslationProvider, setTranslationProvider as saveTranslationProvider, getAdditionalWork, getOriginalFilename, getCurrentActiveFilenamePublic } from "@/lib/storage";
 import { calculateTranslationStatus, mergeXCStringsWithStorage, saveMergedData } from "@/lib/merge-utils";
 import { findNameByLocale } from "@/lib/language-utils";
-import { getSourceInfo, getTranslatableKeys, parseXCStrings, isNeedsReview } from "@/lib/xcstrings-parser";
+import { getSourceInfo, getStringValue, getTranslatableKeys, parseXCStrings, isNeedsReview } from "@/lib/xcstrings-parser";
 import { requestWakeLock, releaseWakeLock } from "@/lib/wake-lock";
 import type { XCStrings } from "@/types/xcstrings";
 import type { TranslationStatus, TranslationProvider } from "@/types/translation";
@@ -58,6 +58,7 @@ export default function Home() {
     languages: [],
     cancelToken: null,
   });
+  const [mode, setMode] = useState<"translation" | "phonetic">("translation");
 
   // 앱 시작 시 저장된 xcstrings 파일 및 API 키 자동 로드
   useEffect(() => {
@@ -187,7 +188,19 @@ export default function Home() {
       });
     }
     
-    const missingTranslatedKeys = sourceKeys.filter((key) => {
+    // 모드에 따라 comment 필터링
+    const filteredKeys = sourceKeys.filter((key) => {
+      const sourceInfo = getSourceInfo(xcstrings, key);
+      if (mode === "translation") {
+        // 번역 모드: [PHONETIC]이 없는 것만
+        return !sourceInfo?.comment || !sourceInfo.comment.includes("[PHONETIC]");
+      } else {
+        // 음가변환 모드: [PHONETIC]이 있는 것만
+        return sourceInfo?.comment && sourceInfo.comment.includes("[PHONETIC]");
+      }
+    });
+
+    const missingTranslatedKeys = filteredKeys.filter((key) => {
       // "needs review" 상태인 경우 항상 재번역 대상
       if (isNeedsReview(xcstrings, key, locale)) {
         return true;
@@ -228,9 +241,58 @@ export default function Home() {
       try {
         const texts = missingTranslatedKeys.map((key) => {
           const sourceInfo = getSourceInfo(xcstrings, key);
+          
+          // 번역 모드와 음가변환 모드 완전 분리
+          let textToUse = sourceInfo?.sourceText || key;
+          
+          if (mode === "phonetic") {
+            // 음가변환 모드: sk, sl, sv, ru 언어코드인 경우 디폴트 값을 원본으로 사용
+            if (["sk", "sl", "sv", "ru"].includes(locale)) {
+              const entry = xcstrings.strings[key];
+              
+              // 원본 파일에서 해당 언어의 번역값을 먼저 확인
+              const defaultValue = entry ? getStringValue(entry, locale) : "";
+              
+              // entry 구조 확인
+              console.log(`[음가변환 디버그] 키: ${key}, 언어: ${locale}`);
+              console.log(`  - sourceText (원문): "${sourceInfo?.sourceText || ""}"`);
+              console.log(`  - entry 존재: ${!!entry}`);
+              if (entry) {
+                console.log(`  - entry.localizations 존재: ${!!entry.localizations}`);
+                if (entry.localizations) {
+                  console.log(`  - entry.localizations[${locale}] 존재: ${!!entry.localizations[locale]}`);
+                  if (entry.localizations[locale]) {
+                    console.log(`  - entry.localizations[${locale}].stringUnit.value: "${entry.localizations[locale].stringUnit?.value || ""}"`);
+                  }
+                  // 모든 언어 확인
+                  console.log(`  - entry.localizations의 모든 언어:`, Object.keys(entry.localizations || {}));
+                }
+              }
+              
+              // 없으면 originalTranslations에서 확인
+              const fallbackValue = defaultValue || originalTranslations[key] || "";
+              
+              console.log(`  - defaultValue (getStringValue(${locale})): "${defaultValue}"`);
+              console.log(`  - originalTranslations[key]: "${originalTranslations[key] || ""}"`);
+              console.log(`  - fallbackValue (최종): "${fallbackValue}"`);
+              console.log(`  - fallbackValue.trim() 결과: "${fallbackValue.trim()}"`);
+              console.log(`  - 현재 textToUse: "${textToUse}"`);
+              console.log(`  - 사용할 텍스트: "${fallbackValue && fallbackValue.trim() ? fallbackValue : textToUse}"`);
+              
+              if (fallbackValue && fallbackValue.trim()) {
+                textToUse = fallbackValue;
+                console.log(`  ✓ 디폴트 값 사용: "${textToUse}"`);
+              } else {
+                console.log(`  ✗ 디폴트 값 없음, 원문 사용: "${textToUse}"`);
+                console.log(`  ⚠️  원문이 이미 로마자 표기법이므로 ru 음가 변환이 제대로 안 될 수 있습니다.`);
+              }
+            }
+          }
+          // 번역 모드: 항상 sourceText 사용 (음가 변환 로직 없음)
+          
           return {
             key,
-            text: sourceInfo?.sourceText || key,
+            text: textToUse,
             comment: sourceInfo?.comment,
           };
         }).filter((item) => item.text && item.text.trim());
@@ -325,7 +387,32 @@ export default function Home() {
         onProgress(i + 1, missingTranslatedKeys.length);
 
         const sourceInfo = getSourceInfo(xcstrings, key);
-        const sourceText = sourceInfo?.sourceText || key;
+        
+        // 번역 모드와 음가변환 모드 완전 분리
+        let sourceText = sourceInfo?.sourceText || key;
+        
+        if (mode === "phonetic") {
+          // 음가변환 모드: sk, sl, sv, ru 언어코드인 경우 디폴트 값을 원본으로 사용
+          if (["sk", "sl", "sv", "ru"].includes(locale)) {
+            const entry = xcstrings.strings[key];
+            // 원본 파일에서 해당 언어의 번역값을 먼저 확인
+            const defaultValue = entry ? getStringValue(entry, locale) : "";
+            // 없으면 originalTranslations에서 확인
+            const fallbackValue = defaultValue || originalTranslations[key] || "";
+            
+            console.log(`[음가변환 디버그] 키: ${key}, 언어: ${locale}`);
+            console.log(`  - sourceText: "${sourceInfo?.sourceText || ""}"`);
+            console.log(`  - defaultValue (getStringValue): "${defaultValue}"`);
+            console.log(`  - originalTranslations[key]: "${originalTranslations[key] || ""}"`);
+            console.log(`  - fallbackValue (최종): "${fallbackValue}"`);
+            console.log(`  - 사용할 텍스트: "${fallbackValue && fallbackValue.trim() ? fallbackValue : sourceText}"`);
+            
+            if (fallbackValue && fallbackValue.trim()) {
+              sourceText = fallbackValue;
+            }
+          }
+        }
+        // 번역 모드: 항상 sourceText 사용 (음가 변환 로직 없음)
 
         if (!sourceText || !sourceText.trim()) {
           continue;
@@ -770,6 +857,8 @@ export default function Home() {
         }}
         isTranslating={translationProgress.isTranslating}
         refreshKey={refreshKey}
+        mode={mode}
+        onModeChange={setMode}
       />
 
       <main className="flex-1 overflow-y-auto bg-gray-50">
@@ -784,7 +873,7 @@ export default function Home() {
             <>
               <div className="bg-white rounded-lg shadow p-6">
                 <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                  {selectedLanguageName || selectedLocale || "언어 선택"}
+                  {mode === "phonetic" ? "음가변환" : "번역"} - {selectedLanguageName || selectedLocale || "언어 선택"}
                 </h2>
                 
                 {translationStatus && (
@@ -1206,6 +1295,8 @@ export default function Home() {
                     xcstrings={xcstrings}
                     locale={selectedLocale}
                     onTranslationUpdate={handleTranslationUpdate}
+                    mode={mode}
+                    refreshKey={refreshKey}
                   />
                 </div>
               )}

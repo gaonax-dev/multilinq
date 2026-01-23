@@ -111,13 +111,95 @@ async function translateWithDeepL(
 }
 
 /**
- * 음가 결과 후처리 (괄호 제거, 원문과 동일 여부 확인)
+ * 언어별 음가 검증 규칙 (예상 스크립트, 금지 스크립트)
+ */
+interface PhoneticValidationRule {
+  expectedScripts?: RegExp[]; // 예상 스크립트 범위 (하나 이상 있어야 함)
+  forbiddenScripts?: RegExp[]; // 금지 스크립트 범위 (있으면 안 됨)
+  description: string; // 검증 실패 시 메시지용
+}
+
+function getPhoneticValidationRule(targetLanguage: string): PhoneticValidationRule | null {
+  const hangulRegex = /[\uAC00-\uD7A3\u1100-\u11FF\u3130-\u318F]/; // 한글 (완성형, 자모, 호환 자모)
+  const chineseCharsRegex = /[\u4E00-\u9FFF]/; // 한자
+  const japaneseCharsRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/; // 히라가나, 가타카나, 한자
+  
+  switch (targetLanguage) {
+    case "ja":
+      return {
+        expectedScripts: [/[\u3040-\u309F]/, /[\u30A0-\u30FF]/], // 히라가나 또는 가타카나
+        forbiddenScripts: [hangulRegex, chineseCharsRegex], // 한글, 한자 금지
+        description: "히라가나/가타카나"
+      };
+    case "zh-Hans":
+      return {
+        expectedScripts: [/^[a-zA-Z\s\u00C0-\u017F\u0100-\u024F\u1E00-\u1EFF0-9\u0300-\u036F\u0100-\u017F]*$/], // 라틴 + pinyin (대략)
+        forbiddenScripts: [hangulRegex, /[\u3105-\u312F]/, chineseCharsRegex], // 한글, 주음부호, 한자 금지
+        description: "Pinyin (라틴 문자)"
+      };
+    case "zh-Hant":
+      return {
+        expectedScripts: [/[\u3105-\u312F]/], // 주음부호 (ㄅㄆㄇㄈ...)
+        forbiddenScripts: [
+          /[\u1100-\u11FF]/, // 한글 자모 (금지 - 주음부호와 혼동)
+          /[\uAC00-\uD7A3]/, // 한글 완성형
+          /[\u3130-\u318F]/, // 한글 호환 자모
+          chineseCharsRegex // 한자
+        ],
+        description: "주음부호 (注音符号, Bopomofo)"
+      };
+    case "zh-HK":
+      return {
+        expectedScripts: [/^[a-zA-Z\s\u00C0-\u017F]*$/], // 라틴 (Yale)
+        forbiddenScripts: [hangulRegex, chineseCharsRegex, /[\u3105-\u312F]/], // 한글, 한자, 주음부호 금지
+        description: "Yale romanization (라틴)"
+      };
+    case "ko":
+      return {
+        expectedScripts: [/^[a-zA-Z\s\u00C0-\u017F]*$/], // 라틴 (Revised Romanization)
+        forbiddenScripts: [hangulRegex, japaneseCharsRegex, chineseCharsRegex], // 한글, 일본어 문자, 한자 금지
+        description: "Revised Romanization (라틴)"
+      };
+    case "ar":
+    case "iw":
+    case "hi":
+    case "bn":
+    case "ta":
+    case "te":
+    case "kn":
+    case "ml":
+    case "mr":
+    case "pa":
+    case "ur":
+    case "ne":
+    case "si":
+    case "th":
+    case "el":
+    case "uk":
+    case "be":
+    case "bg":
+    case "kk":
+    case "ka":
+    case "hy":
+      // 로마자 표기법 사용 언어들
+      return {
+        expectedScripts: [/^[a-zA-Z\s\u00C0-\u017F\u0100-\u024F\u1E00-\u1EFF\u0300-\u036F]*$/], // 라틴 + 다이어크리틱
+        forbiddenScripts: [hangulRegex, japaneseCharsRegex, chineseCharsRegex, /[\u3105-\u312F]/, /[\u0600-\u06FF]/, /[\u0590-\u05FF]/], // 한글, 일본어, 한자, 주음부호, 아랍어, 히브리어 원문 금지
+        description: "romanization (라틴)"
+      };
+    default:
+      return null; // 검증 규칙 없음
+  }
+}
+
+/**
+ * 음가 결과 후처리 (괄호 제거, 원문과 동일 여부 확인, 스크립트 검증)
  */
 function postProcessPhoneticResult(result: string, originalText: string, sourceLanguage: string, targetLanguage: string): string {
   // 괄호 제거
   let processed = result.replace(/[()]/g, "").trim();
   
-  // 타겟 언어와 원문이 다른 경우에만 원문과 동일 여부 확인
+  // 타겟 언어와 원문이 다른 경우에만 검증
   if (sourceLanguage !== targetLanguage) {
     // 원문과 동일하면 경고 (플레이스홀더 제외하고 비교)
     const originalWithoutPlaceholders = originalText.replace(/%\d*\$?[@\w]+/g, "").replace(/[()]/g, "").trim();
@@ -125,6 +207,33 @@ function postProcessPhoneticResult(result: string, originalText: string, sourceL
     
     if (originalWithoutPlaceholders && processedWithoutPlaceholders === originalWithoutPlaceholders) {
       console.warn(`[음가 변환] 원문과 동일한 결과 반환됨: "${originalText}" → "${processed}"`);
+    }
+    
+    // 언어별 스크립트 검증
+    const validationRule = getPhoneticValidationRule(targetLanguage);
+    if (validationRule && processedWithoutPlaceholders.length > 0) {
+      // 금지 스크립트 검사
+      if (validationRule.forbiddenScripts) {
+        for (const forbiddenRegex of validationRule.forbiddenScripts) {
+          if (forbiddenRegex.test(processedWithoutPlaceholders)) {
+            // zh-Hant 특별 처리: 한글 자모와 주음부호 구분
+            if (targetLanguage === "zh-Hant" && /[\u1100-\u11FF]/.test(processedWithoutPlaceholders)) {
+              console.warn(`[음가 변환] zh-Hant: 한글 자모(ㄴㅏㄹㅡㄹ 등)가 포함됨 - 주음부호(ㄅㄆㄇ)를 사용해야 함: "${originalText}" → "${processed}"`);
+            } else {
+              console.warn(`[음가 변환] ${targetLanguage}: 금지된 스크립트가 포함된 결과: "${originalText}" → "${processed}"`);
+            }
+            break;
+          }
+        }
+      }
+      
+      // 예상 스크립트 검사
+      if (validationRule.expectedScripts) {
+        const hasExpectedScript = validationRule.expectedScripts.some(regex => regex.test(processedWithoutPlaceholders));
+        if (!hasExpectedScript) {
+          console.warn(`[음가 변환] ${targetLanguage}: ${validationRule.description}가 없는 결과 (원문 가능성): "${originalText}" → "${processed}"`);
+        }
+      }
     }
   }
   
@@ -154,7 +263,7 @@ async function translateWithOpenAI(
   
   // system message 설정 (음가 생성 모드와 일반 번역 모드 구분)
   const systemMessage = isPhoneticMode
-    ? "You are a phonetic transcription specialist. Output ONLY the phonetic notation with no explanations, no introductory phrases, and no additional text. Never write 'the pronunciation is' or similar phrases. Just the notation itself."
+    ? "Convert text to phonetic notation as it sounds in the target language. Output only the phonetic notation in one line, no line breaks, nothing else."
     : "You are a professional translator specializing in iOS app localization.";
   
   // gpt-5.1 또는 gpt-3.5-turbo 사용 (gpt-4는 일부 계정에서 접근 불가)
@@ -225,7 +334,7 @@ async function translateWithClaude(
   
   // Claude는 system message를 별도로 지원하므로 프롬프트에 포함
   const fullPrompt = isPhoneticMode
-    ? "You are a phonetic transcription specialist. Your task is to provide phonetic pronunciation of text, NOT translation.\n\n" + prompt
+    ? "Convert text to phonetic notation as it sounds in the target language. Output only the phonetic notation in one line, no line breaks, nothing else.\n\n" + prompt
     : prompt;
   
   const message = await anthropic.messages.create({
@@ -255,13 +364,13 @@ function getPhoneticRulesForLanguage(targetLanguage: string): string {
   switch (targetLanguage) {
     // 동아시아
     case "ja":
-      return "- Use Hiragana (ひらがな) and/or Katakana (カタカナ) only.";
+      return "- Use Hiragana (ひらがな) and/or Katakana (カタカナ) only. DO NOT use Korean (한글/Hangul). DO NOT return the original text. Output MUST be only in ひらがな or カタカナ.";
     case "ko":
       return "- Use Revised Romanization of Korean (국어의 로마자 표기법) only.";
     case "zh-Hans":
       return "- Use Hanyu Pinyin (汉语拼音, pinyin) only.";
     case "zh-Hant":
-      return "- Use Zhuyin (注音符号, Bopomofo) only.";
+      return "- Use Zhuyin (注音符号, Bopomofo) only. Example: 'Hello' → 'ㄏㄜ ㄌㄛ' (NOT 'Hello' or pinyin). Output MUST be in Zhuyin characters (ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦㄧㄨㄩ). CRITICAL: DO NOT use Hangul Jamo (한글 자모) - they look similar but are different Unicode ranges. Use ONLY Zhuyin Bopomofo characters. DO NOT return the original text unchanged.";
     case "zh-HK":
       return "- Use Yale romanization for Cantonese only.";
 
@@ -360,17 +469,12 @@ function buildAITranslationPrompt(text: string, sourceLanguage: string, targetLa
     const textWithoutParentheses = text.replace(/[()]/g, "").replace(/\n/g, " ");
     const langSpecificRules = getPhoneticRulesForLanguage(targetLanguage).trim();
     
-    prompt = `CRITICAL RULES:
-  1. Output ONLY the phonetic notation/pronunciation itself
-  2. NO explanations, NO descriptions, NO additional text
-  3. NO phrases like "the pronunciation is...", "it sounds like...", etc.
-  4. NO parentheses, NO quotation marks around the output
-  5. Use ${langName} (${targetLanguage}) script/notation only
-  ${langSpecificRules ? `6. ${langSpecificRules}` : ''}
-  
-  Text: ${textWithoutParentheses}
-  
-  Output (phonetic notation only):`;
+    prompt = `Convert the following text to ${langName} (${targetLanguage}) phonetic notation - write it as it sounds in one line, no line breaks.
+${langSpecificRules ? `Rules for ${langName} (${targetLanguage}): ${langSpecificRules}` : ''}
+
+Text: ${textWithoutParentheses}
+
+Output (one line, sound only):`;
   } else {
     // 일반 번역 모드
     prompt = `Translate the following English text to ${langName} (${targetLanguage}).

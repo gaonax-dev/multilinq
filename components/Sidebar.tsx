@@ -23,6 +23,8 @@ interface SidebarProps {
   onTranslationApiKeyChange?: (key: string) => void;
   isTranslating?: boolean;
   refreshKey?: number;
+  mode?: "translation" | "phonetic";
+  onModeChange?: (mode: "translation" | "phonetic") => void;
 }
 
 export default function Sidebar({
@@ -39,6 +41,8 @@ export default function Sidebar({
   onTranslationApiKeyChange,
   isTranslating = false,
   refreshKey = 0,
+  mode = "translation",
+  onModeChange,
 }: SidebarProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [internalProvider, setInternalProvider] = useState<TranslationProvider>("google-translator");
@@ -96,8 +100,36 @@ export default function Sidebar({
   return (
     <div className="w-80 bg-white border-r border-gray-200 h-screen overflow-y-auto flex flex-col">
       <div className="p-4 border-b border-gray-200">
-        <h1 className="text-xl font-bold text-gray-900">MultiLinq</h1>
-        <p className="text-xs text-gray-700 mt-1">Localizable.xcstrings 번역 도구</p>
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">MultiLinq</h1>
+            <p className="text-xs text-gray-700 mt-1">Localizable.xcstrings 번역 도구</p>
+          </div>
+        </div>
+        {onModeChange && (
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => onModeChange("translation")}
+              className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                mode === "translation"
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              번역
+            </button>
+            <button
+              onClick={() => onModeChange("phonetic")}
+              className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                mode === "phonetic"
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              음가변환
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="p-4 space-y-4 flex-1">
